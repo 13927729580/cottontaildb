@@ -78,32 +78,40 @@ class SuperBitLSHIndex<T : VectorValue<*>>(name: Name.IndexName, parent: Entity,
             val recordset = Recordset(this.produces, (predicate.k * predicate.query.size).toLong())
             val lsh = SuperBitLSH(this.config.get().stages, this.config.get().buckets, this.columns.first().logicalSize, this.config.get().seed, predicate.query.first())
 
-            /* Generate record set .*/
-            for (i in predicate.query.indices) {
-                val query = predicate.query[i]
-                val knn = if (predicate.k == 1) {
+            /* get buckets. We want a map of buckets each with a list of the query indices in taht bucket. */
+            val queryIndicesPerBucket = HashMap<Int, MutableList<Int>>()
+            predicate.query.forEachIndexed { queryIndex, query -> queryIndicesPerBucket.getOrPut(lsh.hash(query).last()) { mutableListOf() }.add(queryIndex) }
+            val knns = Array(predicate.query.size) {
+                if (predicate.k == 1) {
                     MinSingleSelection<ComparablePair<Long, DoubleValue>>()
                 } else {
                     MinHeapSelection<ComparablePair<Long, DoubleValue>>(predicate.k)
                 }
+            }
 
-                val bucket: Int = lsh.hash(query).last()
+            /* Generate record set .*/
+            for ((bucket, queryIndices) in queryIndicesPerBucket) {
+                println("bucket $bucket, ${queryIndices.size} query vectors")
+
                 val tupleIds = this.map[bucket]
-                if (tupleIds != null) {
-                    tupleIds.forEach {
-                        val record = tx.read(it)
-                        val value = record[predicate.column]
-                        if (value is VectorValue<*>) {
+                tupleIds?.forEach {
+                    val record = tx.read(it)
+                    val value = record[predicate.column]
+                    if (value is VectorValue<*>) {
+                        for (queryIndex in queryIndices) {
+                            val query = predicate.query[queryIndex]
                             if (predicate.weights != null) {
-                                knn.offer(ComparablePair(it, predicate.distance(query, value, predicate.weights[i])))
+                                knns[queryIndex].offer(ComparablePair(it, predicate.distance(query, value, predicate.weights[queryIndex])))
                             } else {
-                                knn.offer(ComparablePair(it, predicate.distance(query, value)))
+                                knns[queryIndex].offer(ComparablePair(it, predicate.distance(query, value)))
                             }
                         }
                     }
-                    for (j in 0 until knn.size) {
-                        recordset.addRowUnsafe(knn[j].first, arrayOf(knn[j].second))
-                    }
+                }
+            }
+            for (knn in knns) {
+                for (j in 0 until knn.size) {
+                    recordset.addRowUnsafe(knn[j].first, arrayOf(knn[j].second))
                 }
             }
             return recordset
