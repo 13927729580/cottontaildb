@@ -1,8 +1,6 @@
 package org.vitrivr.cottontail.database.index.lsh
 
 import org.mapdb.DBMaker
-import org.mapdb.HTreeMap
-import org.mapdb.Serializer
 import org.vitrivr.cottontail.database.column.ColumnType
 import org.vitrivr.cottontail.database.entity.Entity
 import org.vitrivr.cottontail.database.index.Index
@@ -35,8 +33,6 @@ abstract class LSHIndex<T : VectorValue<*>>(final override val name: Name.IndexN
         DBMaker.fileDB(this.path.toFile()).fileMmapEnable().transactionEnable().make()
     }
 
-    /** Map structure used for [LSHIndex]. Contains bucket ID and maps it to array of longs. */
-    protected val map: HTreeMap<Int, LongArray> = this.db.hashMap(MAP_FIELD_NAME, Serializer.INTEGER, Serializer.LONG_ARRAY).counterEnable().createOrOpen()
 
     /** Flag indicating if this [LSHIndex] has been closed. */
     @Volatile

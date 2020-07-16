@@ -1,5 +1,8 @@
 package org.vitrivr.cottontail.database.index.lsh.superbit
 
+import org.mapdb.HTreeMap
+import org.mapdb.Serializer
+import org.slf4j.LoggerFactory
 import org.vitrivr.cottontail.database.column.Column
 import org.vitrivr.cottontail.database.entity.Entity
 import org.vitrivr.cottontail.database.events.DataChangeEvent
@@ -40,12 +43,15 @@ class SuperBitLSHIndex<T : VectorValue<*>>(name: Name.IndexName, parent: Entity,
         const val CONFIG_NAME_SEED = "seed"
         private const val CONFIG_DEFAULT_STAGES = 3
         private const val CONFIG_DEFAULT_BUCKETS = 10
+        private val LOGGER = LoggerFactory.getLogger(SuperBitLSHIndex::class.java)
     }
 
     /** Internal configuration object for [SuperBitLSHIndex]. */
     val config = this.db.atomicVar(CONFIG_NAME, SuperBitLSHIndexConfig.Serializer).createOrOpen()
 
     override val type = IndexType.SUPERBIT_LSH
+
+    private var maps: List<HTreeMap<Int, LongArray>>
 
     init {
         if (!columns.all { it.type.vector }) {
@@ -56,10 +62,14 @@ class SuperBitLSHIndex<T : VectorValue<*>>(name: Name.IndexName, parent: Entity,
             val stages = params[CONFIG_NAME_STAGES]?.toIntOrNull() ?: CONFIG_DEFAULT_STAGES
             val seed = params[CONFIG_NAME_SEED]?.toLongOrNull() ?: System.currentTimeMillis()
             this.config.set(SuperBitLSHIndexConfig(buckets, stages, seed))
+
         } else {
             if (config.get() == null) {
                 throw StoreException("No parameters supplied, and the config from disk was also empty.")
             }
+        }
+        this.maps = List(this.config.get().stages) {
+            this.db.hashMap(MAP_FIELD_NAME + "_stage$it", Serializer.INTEGER, Serializer.LONG_ARRAY).counterEnable().createOrOpen()
         }
     }
 
@@ -78,9 +88,25 @@ class SuperBitLSHIndex<T : VectorValue<*>>(name: Name.IndexName, parent: Entity,
             val recordset = Recordset(this.produces, (predicate.k * predicate.query.size).toLong())
             val lsh = SuperBitLSH(this.config.get().stages, this.config.get().buckets, this.columns.first().logicalSize, this.config.get().seed, predicate.query.first())
 
-            /* get buckets. We want a map of buckets each with a list of the query indices in taht bucket. */
-            val queryIndicesPerBucket = HashMap<Int, MutableList<Int>>()
-            predicate.query.forEachIndexed { queryIndex, query -> queryIndicesPerBucket.getOrPut(lsh.hash(query).last()) { mutableListOf() }.add(queryIndex) }
+            // todo: this no longer works as the candidate set for each query is now determined by all stages, not just the last
+            //       therefore, it is much more diverse than just the number of buckets. But it should still be possible to leverage
+            //       overlaps in candidate sets. This kind of reminds me of the algorithms lecture where we had something with a graph
+            //       there was some fancy algorithm, where a subset was represented by the root node. Looking it up: It's union find
+            //       but doesn't seem to be useful here. It's for checking if nodes of a graph are connected.
+            //       what do we actually need here? We need to find the most optimal way to load and iterate through tuples, so
+            //       that when we have loaded a tuple, we can compare it to all applicable query vectors.
+            //       but we of course must avoid loading every tuple.
+            //       could we build the union of all tuples based on all query vectors? And then sort query vectors
+            //       by most in common ones? Think about this some more...
+            //       ----------
+            //       Does the correspondence between buckets matter for stages?
+            //       How am I doing this? I shouldn't use the label between stages, it's arbitrary...
+            /* for each query, we want a set with the tuples that were in the same bucket in one stage during the
+               we can no longer do it per-bucket, because of teh different stages. we could try it per stage, and then
+               merge, but I think this is bad because I expect quite a bit of overlap between candidate sets
+               of different stages and we want to avoid looking at tuples more than once
+             */
+
             val knns = Array(predicate.query.size) {
                 if (predicate.k == 1) {
                     MinSingleSelection<ComparablePair<Long, DoubleValue>>()
@@ -90,30 +116,53 @@ class SuperBitLSHIndex<T : VectorValue<*>>(name: Name.IndexName, parent: Entity,
             }
 
             /* Generate record set .*/
-            queryIndicesPerBucket.toList().parallelStream().forEach { (bucket, queryIndices) ->
-                println("bucket $bucket, ${queryIndices.size} query vectors")
-
-                val tupleIds = this.map[bucket]
-                tupleIds?.forEach {
+            val indexedQueries = predicate.query.mapIndexed{ i, q -> i to q } // don't think so, it's super fast
+            LOGGER.debug("Processing queries.")
+            indexedQueries.parallelStream().forEach { (queryIndex, query)   ->
+                LOGGER.debug("Building TIDs for query")
+                val buckets = lsh.hash(query)
+                LOGGER.trace("query $queryIndex hash $buckets")
+                val tupleIds = HashSet<Long>()
+                buckets.forEachIndexed { stage, bucket ->
+                    LOGGER.trace("adding tids for stage $stage, bucket $bucket")
+                    tupleIds.addAll(this.maps[stage][bucket]!!.toList())
+                    LOGGER.trace("Done.")
+                }
+                // building tids takes 15+s for 512 buckets and 4096 query vectors if done before for all queries
+                // not sure if this is the right way... We know already from the bucket list which queries have common
+                // tids. So we could iterate per stage over the buckets as I did before, but keep in a hash set for each
+                // query the tids that were already visited to avoid comparing again, but this can potentially be a huge
+                // set and parallel access could be important. I will first do an implementation for a single query vector
+                // and then consider parallelization later
+                // I expect that with more stages, the overlap between stages becomes smaller and queries will have a
+                // more disjoint candidate set. But there's also the fact that you can only add to the candidate set
+                // with further stages. Overlap over the entire query set grows, i.e. pairs of query vectors with common
+                // candidates will grow and as a consequence we'll be loading tuples multiple times...
+                // on the other hand, if we do it stage-wise, we still have the problem of loading multiple times
+                // but we can more easily pool queries that need the same data at that stage
+                // parallelization is probably easiest by partitioning the data in the db, right? Con is load-imbalance
+                LOGGER.debug("Done")
+                LOGGER.trace("query $queryIndex, ${tupleIds.size} tIds")
+                tupleIds.forEach {
                     val record = tx.read(it)
                     val value = record[predicate.column]
                     if (value is VectorValue<*>) {
-                        for (queryIndex in queryIndices) {
-                            val query = predicate.query[queryIndex]
-                            if (predicate.weights != null) {
-                                knns[queryIndex].offer(ComparablePair(it, predicate.distance(query, value, predicate.weights[queryIndex])))
-                            } else {
-                                knns[queryIndex].offer(ComparablePair(it, predicate.distance(query, value)))
-                            }
+                        if (predicate.weights != null) {
+                            knns[queryIndex].offer(ComparablePair(it, predicate.distance(query, value, predicate.weights[queryIndex])))
+                        } else {
+                            knns[queryIndex].offer(ComparablePair(it, predicate.distance(query, value)))
                         }
                     }
                 }
             }
+            LOGGER.debug("Done. Creating Recordset.")
+//            selectToRecordset(this.columns.first(), knns.toList())
             for (knn in knns) {
                 for (j in 0 until knn.size) {
                     recordset.addRowUnsafe(knn[j].first, arrayOf(knn[j].second))
                 }
             }
+            LOGGER.debug("Done.")
             return recordset
         } else {
             throw QueryException.UnsupportedPredicateException("Index '${this.name}' (LSH Index) does not support predicates of type '${predicate::class.simpleName}'.")
@@ -122,26 +171,44 @@ class SuperBitLSHIndex<T : VectorValue<*>>(name: Name.IndexName, parent: Entity,
 
     /** (Re-)builds the [SuperBitLSHIndex]. */
     override fun rebuild(tx: Entity.Tx) {
+        LOGGER.debug("Rebuilding ${this.name}")
         /* LSH. */
-        val specimen = this.acquireSpecimen(tx) ?: return
+        val specimen = this.acquireSpecimen(tx) ?: throw DatabaseException("Could not gather specimen to create index.") // todo: find better exception
         val lsh = SuperBitLSH(this.config.get().stages, this.config.get().buckets, this.columns[0].logicalSize, this.config.get().seed, specimen)
 
-        /* (Re-)create index entries locally. */
-        val local = Array(this.config.get().buckets) { mutableListOf<Long>() }
+
+        /* Locally (Re-)create index entries and sort bucket for each stage to corresponding map. */
+        val local = List(this.config.get().stages) {
+            MutableList(this.config.get().buckets) { mutableListOf<Long>() }
+        }
+        /* for every record get bucket-signature, then iterate over stages and add tid to the list of that bucket of that stage */
         tx.forEach {
-            val value = it[this.columns[0]]
+            val value = it[this.columns[0]] ?: throw DatabaseException("Could not find column for entry in index $this") // todo: what if more columns? This should never happen -> need to change type and sort this out on index creation
             if (value is VectorValue<*>) {
-                val bucket: Int = lsh.hash(value).last()
-                local[bucket].add(it.tupleId)
+                val buckets = lsh.hash(value)
+                (buckets zip local).forEach { (bucket, map) ->
+                    map[bucket].add(it.tupleId)
+                }
+            } else {
+                throw DatabaseException("$value is no vector column!")
             }
         }
 
-        /* Replace existing map. */
-        this.map.clear()
-        local.forEachIndexed { bucket, list -> this.map[bucket] = list.toLongArray() }
+        /* clear existing maps. */
+        if (this.maps.size != local.size) {
+            throw IllegalArgumentException("This should never happen")
+        }
+        (this.maps zip local).forEach { (map, localdata) ->
+            map.clear()
+            localdata.forEachIndexed { bucket, tIds ->
+                map[bucket] = tIds.toLongArray()
+            }
+        }
+
 
         /* Commit local database. */
         this.db.commit()
+        LOGGER.debug("Done.")
     }
 
     /**
