@@ -25,6 +25,8 @@ import org.vitrivr.cottontail.model.exceptions.StoreException
 import org.vitrivr.cottontail.model.recordset.Recordset
 import org.vitrivr.cottontail.model.values.DoubleValue
 import org.vitrivr.cottontail.model.values.types.VectorValue
+import kotlin.collections.HashMap
+import kotlin.collections.HashSet
 
 /**
  * Represents a LSH based index in the Cottontail DB data model. An [Index] belongs to an [Entity] and can be used to
@@ -43,7 +45,7 @@ class SuperBitLSHIndex<T : VectorValue<*>>(name: Name.IndexName, parent: Entity,
         const val CONFIG_NAME_SEED = "seed"
         private const val CONFIG_DEFAULT_STAGES = 3
         private const val CONFIG_DEFAULT_BUCKETS = 10
-        private val LOGGER = LoggerFactory.getLogger(SuperBitLSHIndex::class.java)
+        private val LOGGER = LoggerFactory.getLogger("org.vitrivr.cottontail.database.index.lsh.superbit.SuperBitLSHIndex")
     }
 
     /** Internal configuration object for [SuperBitLSHIndex]. */
@@ -116,17 +118,20 @@ class SuperBitLSHIndex<T : VectorValue<*>>(name: Name.IndexName, parent: Entity,
             }
 
             /* Generate record set .*/
-            val indexedQueries = predicate.query.mapIndexed{ i, q -> i to q } // don't think so, it's super fast
-            LOGGER.debug("Processing queries.")
-            indexedQueries.parallelStream().forEach { (queryIndex, query)   ->
-                LOGGER.debug("Building TIDs for query")
-                val buckets = lsh.hash(query)
-                LOGGER.trace("query $queryIndex hash $buckets")
+
+            /* now find identical signatures that can be treated the same */
+            val queryIndicesPerBucketSignature = HashMap<List<Int>, MutableList<Int>>()
+            // we need to store the hash as list because lists are compared structurally, not by reference as arrays are
+            predicate.query.forEachIndexed {queryIndex, query ->
+                queryIndicesPerBucketSignature.getOrPut(lsh.hash(query).toList()) { mutableListOf() }.add(queryIndex) }
+
+            LOGGER.debug("Processing unique bucket signatures (${queryIndicesPerBucketSignature.size}) for ${predicate.query.size} queries.")
+            queryIndicesPerBucketSignature.toList().parallelStream().forEach { (bucketSignature, queryIndexes) ->
+                LOGGER.debug("Building TIDs for bucketSignature")
+                LOGGER.trace("bucketSignature ${bucketSignature} with ${queryIndexes.size} queries")
                 val tupleIds = HashSet<Long>()
-                buckets.forEachIndexed { stage, bucket ->
-                    LOGGER.trace("adding tids for stage $stage, bucket $bucket")
+                bucketSignature.forEachIndexed { stage, bucket ->
                     tupleIds.addAll(this.maps[stage][bucket]!!.toList())
-                    LOGGER.trace("Done.")
                 }
                 // building tids takes 15+s for 512 buckets and 4096 query vectors if done before for all queries
                 // not sure if this is the right way... We know already from the bucket list which queries have common
@@ -141,16 +146,18 @@ class SuperBitLSHIndex<T : VectorValue<*>>(name: Name.IndexName, parent: Entity,
                 // on the other hand, if we do it stage-wise, we still have the problem of loading multiple times
                 // but we can more easily pool queries that need the same data at that stage
                 // parallelization is probably easiest by partitioning the data in the db, right? Con is load-imbalance
-                LOGGER.debug("Done")
-                LOGGER.trace("query $queryIndex, ${tupleIds.size} tIds")
+                if (LOGGER.isTraceEnabled) LOGGER.trace("bucketSignature ${bucketSignature} has ${tupleIds.size} tIds")
                 tupleIds.forEach {
                     val record = tx.read(it)
                     val value = record[predicate.column]
                     if (value is VectorValue<*>) {
-                        if (predicate.weights != null) {
-                            knns[queryIndex].offer(ComparablePair(it, predicate.distance(query, value, predicate.weights[queryIndex])))
-                        } else {
-                            knns[queryIndex].offer(ComparablePair(it, predicate.distance(query, value)))
+                        queryIndexes.forEach {queryIndex ->
+                            val query = predicate.query[queryIndex]
+                            if (predicate.weights != null) {
+                                knns[queryIndex].offer(ComparablePair(it, predicate.distance(query, value, predicate.weights[queryIndex])))
+                            } else {
+                                knns[queryIndex].offer(ComparablePair(it, predicate.distance(query, value)))
+                            }
                         }
                     }
                 }
