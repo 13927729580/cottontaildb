@@ -30,7 +30,9 @@ import java.util.*
 class SuperBit(d: Int, N: Int, L: Int, seed: Long, species: VectorValue<*>) : Serializable {
 
     /** List of hyperplanes held by this [SuperBit]. */
-    private val hyperplanes: Array<VectorValue<*>>
+    private val _hyperplanes: Array<VectorValue<*>>
+    val hyperplanes
+        get() = _hyperplanes.copyOf()
 
     /**
      * The K vectors are orthogonalized in L batches of N vectors.
@@ -78,6 +80,8 @@ class SuperBit(d: Int, N: Int, L: Int, seed: Long, species: VectorValue<*>) : Se
 
         val w = Array(K) { v[it] }
 
+        // todo: is this the orthogonalization?
+        //       vectors within superbit are orthogonal for DoubleVectors. BUT NOT FOR COMPLEX...
         for (i in 0 until L) {
             for (j in 1..N) {
                 for (k in 1 until j) {
@@ -87,7 +91,7 @@ class SuperBit(d: Int, N: Int, L: Int, seed: Long, species: VectorValue<*>) : Se
             }
         }
 
-        this.hyperplanes = w // H ̃
+        this._hyperplanes = w // H ̃
     }
 
     /**
@@ -97,9 +101,9 @@ class SuperBit(d: Int, N: Int, L: Int, seed: Long, species: VectorValue<*>) : Se
      * @return The signature.
      */
     fun signature(vector: VectorValue<*>): BooleanArray {
-        val signature = BooleanArray(this.hyperplanes.size)
-        for (i in hyperplanes.indices) {
-            signature[i] = this.hyperplanes[i].dot(vector) >= 0
+        val signature = BooleanArray(this._hyperplanes.size)
+        for (i in _hyperplanes.indices) {
+            signature[i] = this._hyperplanes[i].dot(vector) >= 0
         }
         return signature
     }
