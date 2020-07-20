@@ -1,6 +1,5 @@
 package org.vitrivr.cottontail.database.index.lsh.superbit
 
-import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.Arguments
 import org.junit.jupiter.params.provider.MethodSource
@@ -98,16 +97,16 @@ internal class SuperBitTest {
     @ParameterizedTest
     @MethodSource("provideConfigurationsForSB")
     fun testOrthogonalityReal(N: Int, L: Int) {
-        testOrthogonality2(N, L, DoubleVectorValue.zero(numDim))
+        testOrthogonality(N, L, DoubleVectorValue.zero(numDim))
     }
 
     @ParameterizedTest
     @MethodSource("provideConfigurationsForSB")
     fun testOrthogonalityComplex(N: Int, L: Int) {
-        testOrthogonality2(N, L, Complex64VectorValue.zero(numDim))
+        testOrthogonality(N, L, Complex64VectorValue.zero(numDim))
     }
 
-    private fun testOrthogonality2(N: Int, L: Int, vec: Any) {
+    private fun testOrthogonality(N: Int, L: Int, vec: Any) {
         val sb = SuperBit(numDim, N, L, 1234, vec as VectorValue<*>)
         for (l in 0 until L) {
             for (n in 1 until N) {

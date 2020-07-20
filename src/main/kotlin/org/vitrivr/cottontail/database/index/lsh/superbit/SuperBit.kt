@@ -80,12 +80,10 @@ class SuperBit(d: Int, N: Int, L: Int, seed: Long, species: VectorValue<*>) : Se
 
         val w = Array(K) { v[it] }
 
-        // todo: is this the orthogonalization?
-        //       vectors within superbit are orthogonal for DoubleVectors. BUT NOT FOR COMPLEX...
         for (i in 0 until L) {
             for (j in 1..N) {
                 for (k in 1 until j) {
-                    w[i * N + j - 1] = w[i * N + j - 1] - (w[i * N + k - 1] * w[i * N + k - 1].dot(v[i * N + j - 1]))
+                    w[i * N + j - 1] = w[i * N + j - 1] - (w[i * N + k - 1] * w[i * N + j - 1].dot(v[i * N + k - 1])) // order of dot product matters for complex vectors!
                 }
                 w[i * N + j - 1] = w[i * N + j - 1] / w[i * N + j - 1].norm2()
             }
