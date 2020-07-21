@@ -4,6 +4,7 @@ import org.vitrivr.cottontail.model.values.Complex32VectorValue
 import org.vitrivr.cottontail.model.values.Complex64VectorValue
 import org.vitrivr.cottontail.model.values.DoubleVectorValue
 import org.vitrivr.cottontail.model.values.FloatVectorValue
+import org.vitrivr.cottontail.model.values.types.ComplexVectorValue
 import org.vitrivr.cottontail.model.values.types.VectorValue
 import java.io.Serializable
 import java.util.*
@@ -123,7 +124,33 @@ class SuperBit(d: Int, N: Int, L: Int, seed: Long, samplingMethod: SamplingMetho
         return signature
     }
 
-    enum class SamplingMethod {
-        UNIFORM, GAUSSIAN
+    /**
+     * Compute the signature of a complex vector.
+     * Only the first half of the hyperplanes will be considered.
+     * There will be two bits per hyperplane. One containing information of the real, then one with the sign of the
+     * imaginary part of the IP with the hyperplane
+     *
+     * todo: are there better ways to incorporate the imaginary part?
+     *       if in the end the distance measure is the absolute IP, could we maybe do something like this here?
+     *
+     * @param vector
+     * @return The signature.
+     */
+    fun signatureComplex(vector: ComplexVectorValue<*>): BooleanArray {
+        val dots = _hyperplanes.sliceArray(0 until (_hyperplanes.size + 1) / 2).map { // + 1 to get ceil division
+            it.dot(vector)
+        }
+        return BooleanArray(_hyperplanes.size) {
+            if (it % 2 == 0) {
+                dots[it / 2].real >= 0
+            }
+            else {
+                dots[it / 2].imaginary >= 0
+            }
+        }
+    }
+
+    enum class SamplingMethod(val value: Int) {
+        UNIFORM(1), GAUSSIAN(2)
     }
 }

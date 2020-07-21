@@ -50,6 +50,8 @@ class SuperBitLSHIndex<T : VectorValue<*>>(name: Name.IndexName, parent: Entity,
 
     /** Internal configuration object for [SuperBitLSHIndex]. */
     val config = this.db.atomicVar(CONFIG_NAME, SuperBitLSHIndexConfig.Serializer).createOrOpen()
+    private val considerImaginary = false // todo: put in config
+    private val samplingMethod = SuperBit.SamplingMethod.UNIFORM // todo: this as well
 
     override val type = IndexType.SUPERBIT_LSH
 
@@ -88,22 +90,9 @@ class SuperBitLSHIndex<T : VectorValue<*>>(name: Name.IndexName, parent: Entity,
 
             /* Prepare empty Recordset and LSH object. */
             val recordset = Recordset(this.produces, (predicate.k * predicate.query.size).toLong())
-            val lsh = SuperBitLSH(this.config.get().stages, this.config.get().buckets, this.columns.first().logicalSize, this.config.get().seed, predicate.query.first())
+            val lsh = SuperBitLSH(this.config.get().stages, this.config.get().buckets, this.columns.first().logicalSize, this.config.get().seed, predicate.query.first(), considerImaginary, samplingMethod)
 
-            // todo: this no longer works as the candidate set for each query is now determined by all stages, not just the last
-            //       therefore, it is much more diverse than just the number of buckets. But it should still be possible to leverage
-            //       overlaps in candidate sets. This kind of reminds me of the algorithms lecture where we had something with a graph
-            //       there was some fancy algorithm, where a subset was represented by the root node. Looking it up: It's union find
-            //       but doesn't seem to be useful here. It's for checking if nodes of a graph are connected.
-            //       what do we actually need here? We need to find the most optimal way to load and iterate through tuples, so
-            //       that when we have loaded a tuple, we can compare it to all applicable query vectors.
-            //       but we of course must avoid loading every tuple.
-            //       could we build the union of all tuples based on all query vectors? And then sort query vectors
-            //       by most in common ones? Think about this some more...
-            //       ----------
-            //       Does the correspondence between buckets matter for stages?
-            //       How am I doing this? I shouldn't use the label between stages, it's arbitrary...
-            /* for each query, we want a set with the tuples that were in the same bucket in one stage during the
+             /* for each query, we want a set with the tuples that were in the same bucket in one stage during the
                we can no longer do it per-bucket, because of teh different stages. we could try it per stage, and then
                merge, but I think this is bad because I expect quite a bit of overlap between candidate sets
                of different stages and we want to avoid looking at tuples more than once
@@ -181,7 +170,7 @@ class SuperBitLSHIndex<T : VectorValue<*>>(name: Name.IndexName, parent: Entity,
         LOGGER.debug("Rebuilding ${this.name}")
         /* LSH. */
         val specimen = this.acquireSpecimen(tx) ?: throw DatabaseException("Could not gather specimen to create index.") // todo: find better exception
-        val lsh = SuperBitLSH(this.config.get().stages, this.config.get().buckets, this.columns[0].logicalSize, this.config.get().seed, specimen)
+        val lsh = SuperBitLSH(this.config.get().stages, this.config.get().buckets, this.columns[0].logicalSize, this.config.get().seed, specimen, considerImaginary, samplingMethod)
 
 
         /* Locally (Re-)create index entries and sort bucket for each stage to corresponding map. */

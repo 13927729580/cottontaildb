@@ -41,7 +41,7 @@ internal class SuperBitLSHTest {
         println("stages: $stages buckets: $buckets seed: $seed")
         val rng = Random(seed)
         val numDim = 20
-        val lsh = SuperBitLSH(stages, buckets, numDim, seed, Complex64VectorValue.zero(numDim))
+        val lsh = SuperBitLSH(stages, buckets, numDim, seed, Complex64VectorValue.zero(numDim), false, SuperBit.SamplingMethod.UNIFORM)
         val vectors = Array(numVectors) {
             val v = Complex64VectorValue(DoubleArray(numDim * 2) { rng.nextGaussian() })
             v / v.norm2()
@@ -80,7 +80,7 @@ internal class SuperBitLSHTest {
         println("stages: $stages buckets: $buckets seed: $seed")
         val rng = Random(seed)
         val numDim = 20
-        val lsh = SuperBitLSH(stages, buckets, numDim, seed, DoubleVectorValue.zero(numDim))
+        val lsh = SuperBitLSH(stages, buckets, numDim, seed, DoubleVectorValue.zero(numDim), false, SuperBit.SamplingMethod.UNIFORM)
         val vectors = Array(numVectors) {
             val v = DoubleVectorValue(DoubleArray(numDim) { rng.nextGaussian() })
             v / v.norm2()
@@ -94,7 +94,7 @@ internal class SuperBitLSHTest {
     fun testComplexVectorsFromFile(stages: Int, buckets: Int, seed: Long) {
         println("stages: $stages buckets: $buckets seed: $seed")
         val numDim = 20
-        val lsh = SuperBitLSH(stages, buckets, numDim, seed, DoubleVectorValue.zero(numDim))
+        val lsh = SuperBitLSH(stages, buckets, numDim, seed, DoubleVectorValue.zero(numDim), false, SuperBit.SamplingMethod.UNIFORM)
         val file = File("src/test/resources/sampledVectors.csv")
         if (!file.exists()) {
             sampleVectorsFromCsv("src/test/resources/complexVectors.csv", "src/test/resources/sampledVectors.csv")
