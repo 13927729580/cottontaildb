@@ -27,7 +27,7 @@ class SuperBitLSH(private var s: Int, private var b: Int, d: Int, seed: Long, sp
 
     private val k = s * b / 2
     private val N = computeSuperBitDepth(d, k)
-    private val superBit = SuperBit(d, N, k / N, seed, species)
+    private val superBit = SuperBit(d, N, k / N, seed, SuperBit.SamplingMethod.UNIFORM, species)
 
     /**
      * Compute the Super-Bit depth N.

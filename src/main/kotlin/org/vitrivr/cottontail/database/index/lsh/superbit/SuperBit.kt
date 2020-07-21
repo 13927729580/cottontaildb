@@ -27,7 +27,7 @@ import java.util.*
  * @author Manuel Huerbin & Ralph Gasser
  * @version 1.1
  */
-class SuperBit(d: Int, N: Int, L: Int, seed: Long, species: VectorValue<*>) : Serializable {
+class SuperBit(d: Int, N: Int, L: Int, seed: Long, samplingMethod: SamplingMethod, species: VectorValue<*>) : Serializable {
 
     /** List of hyperplanes held by this [SuperBit]. */
     private val _hyperplanes: Array<VectorValue<*>>
@@ -65,18 +65,35 @@ class SuperBit(d: Int, N: Int, L: Int, seed: Long, species: VectorValue<*>) : Se
         Output: H ̃ = [w ,w ,...,w ].
         */
 
-        val random = SplittableRandom(seed)
         val K = N * L
-        val v = Array(K) {
-            val rnd = when(species) {
-                is DoubleVectorValue -> DoubleVectorValue.random(species.logicalSize, random)
-                is FloatVectorValue -> FloatVectorValue.random(species.logicalSize, random)
-                is Complex32VectorValue -> Complex32VectorValue.random(species.logicalSize, random)
-                is Complex64VectorValue -> Complex64VectorValue.random(species.logicalSize, random)
-                else -> throw IllegalArgumentException("")
-            } as VectorValue<*>
-            rnd / rnd.norm2()
-        } // H
+        val v = when (samplingMethod) {
+            SamplingMethod.UNIFORM -> {
+                val random = SplittableRandom(seed)
+                Array(K) {
+                    val rnd = when (species) { // centering components at 0 (subtract 0.5) looks more favorable in terms of hamming dist vs. cosine dist plots
+                        is DoubleVectorValue -> DoubleVectorValue(DoubleArray(species.logicalSize) { random.nextDouble() - 0.5 })
+                        is FloatVectorValue -> FloatVectorValue(FloatArray(species.logicalSize) { (random.nextDouble() - 0.5).toFloat() })
+                        is Complex32VectorValue -> Complex32VectorValue(FloatArray(species.logicalSize * 2) { (random.nextDouble() - 0.5).toFloat() })
+                        is Complex64VectorValue -> Complex64VectorValue(DoubleArray(species.logicalSize * 2) { random.nextDouble() - 0.5 })
+                        else -> throw IllegalArgumentException("Unsupported vector type")
+                    } as VectorValue<*>
+                    rnd / rnd.norm2()
+                } // H
+            }
+            SamplingMethod.GAUSSIAN -> {
+                val random = Random(seed)
+                Array(K) {
+                    val rnd = when(species) {
+                        is DoubleVectorValue -> DoubleVectorValue(DoubleArray(species.logicalSize) { random.nextGaussian() })
+                        is FloatVectorValue -> FloatVectorValue(FloatArray(species.logicalSize) { random.nextGaussian().toFloat() })
+                        is Complex32VectorValue -> Complex32VectorValue(FloatArray(species.logicalSize * 2) { random.nextGaussian().toFloat() })
+                        is Complex64VectorValue -> Complex64VectorValue(DoubleArray(species.logicalSize * 2) { random.nextGaussian() })
+                        else -> throw IllegalArgumentException("Unsupported vector type")
+                    } as VectorValue<*>
+                    rnd / rnd.norm2()
+                }
+            }
+        }
 
         val w = Array(K) { v[it] }
 
@@ -104,5 +121,9 @@ class SuperBit(d: Int, N: Int, L: Int, seed: Long, species: VectorValue<*>) : Se
             signature[i] = this._hyperplanes[i].dot(vector) >= 0
         }
         return signature
+    }
+
+    enum class SamplingMethod {
+        UNIFORM, GAUSSIAN
     }
 }
