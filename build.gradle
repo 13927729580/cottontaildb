@@ -116,6 +116,8 @@ dependencies {
     ///// Apache Commons Math » 3.6
     ///// https://mvnrepository.com/artifact/org.apache.commons/commons-math3
     compile group: 'org.apache.commons', name: 'commons-math3', version: '3.6.1'
+
+    testImplementation 'com.github.doyaaaaaken:kotlin-csv-jvm:0.10.4'
 }
 
 jar {
