@@ -12,7 +12,9 @@ import org.vitrivr.cottontail.database.index.lsh.LSHIndex
 import org.vitrivr.cottontail.database.queries.components.KnnPredicate
 import org.vitrivr.cottontail.database.queries.components.Predicate
 import org.vitrivr.cottontail.database.queries.planning.cost.Cost
+import org.vitrivr.cottontail.math.knn.metrics.AbsoluteInnerProductDistance
 import org.vitrivr.cottontail.math.knn.metrics.CosineDistance
+import org.vitrivr.cottontail.math.knn.metrics.RealInnerProductDistance
 import org.vitrivr.cottontail.math.knn.selection.ComparablePair
 import org.vitrivr.cottontail.math.knn.selection.MinHeapSelection
 import org.vitrivr.cottontail.math.knn.selection.MinSingleSelection
@@ -27,52 +29,50 @@ import org.vitrivr.cottontail.model.values.DoubleValue
 import org.vitrivr.cottontail.model.values.types.VectorValue
 import kotlin.collections.HashMap
 import kotlin.collections.HashSet
+import kotlin.math.abs
 
 /**
  * Represents a LSH based index in the Cottontail DB data model. An [Index] belongs to an [Entity] and can be used to
  * index one to many [Column]s. Usually, [Index]es allow for faster data access. They process [Predicate]s and return
  * [Recordset]s.
  *
+ * TODO: refactor to build from config or params. Avoid to pass around maps as arguments (so that we get compiler assistance)
+ *
  * @author Manuel Huerbin & Ralph Gasser
  * @version 1.1
  */
-class SuperBitLSHIndex<T : VectorValue<*>>(name: Name.IndexName, parent: Entity, columns: Array<ColumnDef<*>>, params: Map<String, String>? = null) : LSHIndex<T>(name, parent, columns) {
+class SuperBitLSHIndex<T : VectorValue<*>>(name: Name.IndexName, parent: Entity, columns: Array<ColumnDef<*>>, config: SuperBitLSHIndexConfig? = null) : LSHIndex<T>(name, parent, columns) {
 
     companion object {
-        const val CONFIG_NAME = "lsh_config"
-        const val CONFIG_NAME_STAGES = "stages"
-        const val CONFIG_NAME_BUCKETS = "buckets"
-        const val CONFIG_NAME_SEED = "seed"
-        private const val CONFIG_DEFAULT_STAGES = 3
-        private const val CONFIG_DEFAULT_BUCKETS = 10
+        private const val CONFIG_NAME = "lsh_config"
         private val LOGGER = LoggerFactory.getLogger("org.vitrivr.cottontail.database.index.lsh.superbit.SuperBitLSHIndex")
     }
 
     /** Internal configuration object for [SuperBitLSHIndex]. */
-    val config = this.db.atomicVar(CONFIG_NAME, SuperBitLSHIndexConfig.Serializer).createOrOpen()
-    private val considerImaginary = false // todo: put in config
-    private val samplingMethod = SuperBit.SamplingMethod.UNIFORM // todo: this as well
+    val config: SuperBitLSHIndexConfig
+    val configOnDisk = this.db.atomicVar(CONFIG_NAME, SuperBitLSHIndexConfig.Serializer).createOrOpen()
 
     override val type = IndexType.SUPERBIT_LSH
 
-    private var maps: List<HTreeMap<Int, LongArray>>
+    private val maps: List<HTreeMap<Int, LongArray>>
 
     init {
         if (!columns.all { it.type.vector }) {
             throw DatabaseException.IndexNotSupportedException(name, "Because only vector columns are supported for SuperBitLSHIndex.")
         }
-        if (params != null) {
-            val buckets = params[CONFIG_NAME_BUCKETS]?.toIntOrNull() ?: CONFIG_DEFAULT_BUCKETS
-            val stages = params[CONFIG_NAME_STAGES]?.toIntOrNull() ?: CONFIG_DEFAULT_STAGES
-            val seed = params[CONFIG_NAME_SEED]?.toLongOrNull() ?: System.currentTimeMillis()
-            this.config.set(SuperBitLSHIndexConfig(buckets, stages, seed))
-
-        } else {
-            if (config.get() == null) {
-                throw StoreException("No parameters supplied, and the config from disk was also empty.")
+        val cod = configOnDisk.get()
+        if (cod == null) {
+            if (config != null) {
+                this.config = config
+                this.configOnDisk.set(config)
+            } else {
+                throw StoreException("No config supplied, and the config from disk was also empty.")
             }
         }
-        this.maps = List(this.config.get().stages) {
+        else {
+            this.config = cod
+        }
+        this.maps = List(this.config.stages) {
             this.db.hashMap(MAP_FIELD_NAME + "_stage$it", Serializer.INTEGER, Serializer.LONG_ARRAY).counterEnable().createOrOpen()
         }
     }
@@ -90,7 +90,7 @@ class SuperBitLSHIndex<T : VectorValue<*>>(name: Name.IndexName, parent: Entity,
 
             /* Prepare empty Recordset and LSH object. */
             val recordset = Recordset(this.produces, (predicate.k * predicate.query.size).toLong())
-            val lsh = SuperBitLSH(this.config.get().stages, this.config.get().buckets, this.columns.first().logicalSize, this.config.get().seed, predicate.query.first(), considerImaginary, samplingMethod)
+            val lsh = SuperBitLSH(this.config.stages, this.config.buckets, this.columns.first().logicalSize, this.config.seed, predicate.query.first(), config.considerImaginary, config.samplingMethod)
 
              /* for each query, we want a set with the tuples that were in the same bucket in one stage during the
                we can no longer do it per-bucket, because of teh different stages. we could try it per stage, and then
@@ -170,12 +170,12 @@ class SuperBitLSHIndex<T : VectorValue<*>>(name: Name.IndexName, parent: Entity,
         LOGGER.debug("Rebuilding ${this.name}")
         /* LSH. */
         val specimen = this.acquireSpecimen(tx) ?: throw DatabaseException("Could not gather specimen to create index.") // todo: find better exception
-        val lsh = SuperBitLSH(this.config.get().stages, this.config.get().buckets, this.columns[0].logicalSize, this.config.get().seed, specimen, considerImaginary, samplingMethod)
+        val lsh = SuperBitLSH(config.stages, config.buckets, this.columns[0].logicalSize, config.seed, specimen, config.considerImaginary, config.samplingMethod)
 
 
         /* Locally (Re-)create index entries and sort bucket for each stage to corresponding map. */
-        val local = List(this.config.get().stages) {
-            MutableList(this.config.get().buckets) { mutableListOf<Long>() }
+        val local = List(config.stages) {
+            MutableList(config.buckets) { mutableListOf<Long>() }
         }
         /* for every record get bucket-signature, then iterate over stages and add tid to the list of that bucket of that stage */
         tx.forEach {
@@ -191,9 +191,6 @@ class SuperBitLSHIndex<T : VectorValue<*>>(name: Name.IndexName, parent: Entity,
         }
 
         /* clear existing maps. */
-        if (this.maps.size != local.size) {
-            throw IllegalArgumentException("This should never happen")
-        }
         (this.maps zip local).forEach { (map, localdata) ->
             map.clear()
             localdata.forEachIndexed { bucket, tIds ->
@@ -222,12 +219,18 @@ class SuperBitLSHIndex<T : VectorValue<*>>(name: Name.IndexName, parent: Entity,
 
     /**
      * Checks if the provided [Predicate] can be processed by this instance of [SuperBitLSHIndex].
+     * note: only use the innerproduct distances with normalized vectors!
      *
      * @param predicate The [Predicate] to check.
      * @return True if [Predicate] can be processed, false otherwise.
      */
     override fun canProcess(predicate: Predicate): Boolean = if (predicate is KnnPredicate<*>) {
-        predicate.columns.first() == this.columns[0] && predicate.distance is CosineDistance
+        predicate.columns.first() == this.columns[0] && (
+                predicate.distance is CosineDistance ||
+                        abs(predicate.query.first().norm2().asDouble().value - 1.0) < 1e-15 &&
+                        (predicate.distance is RealInnerProductDistance ||
+                                predicate.distance is AbsoluteInnerProductDistance)
+                )
     } else {
         false
     }

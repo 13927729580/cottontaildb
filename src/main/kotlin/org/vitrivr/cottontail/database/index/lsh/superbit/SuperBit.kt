@@ -28,8 +28,9 @@ import java.util.*
  * @author Manuel Huerbin & Ralph Gasser
  * @version 1.1
  */
-class SuperBit(val d: Int, val N: Int, val L: Int, val seed: Long, val samplingMethod: SamplingMethod, species: VectorValue<*>) : Serializable {
+class SuperBit(val N: Int, val L: Int, val seed: Long, val samplingMethod: SamplingMethod, species: VectorValue<*>) : Serializable {
 
+    val d = species.logicalSize
     /** List of hyperplanes held by this [SuperBit]. */
     private val _hyperplanes: Array<VectorValue<*>>
     val hyperplanes
@@ -145,7 +146,7 @@ class SuperBit(val d: Int, val N: Int, val L: Int, val seed: Long, val samplingM
         }
     }
 
-    enum class SamplingMethod(val value: Int) {
-        UNIFORM(1), GAUSSIAN(2)
+    enum class SamplingMethod() {
+        UNIFORM, GAUSSIAN
     }
 }

@@ -3,7 +3,10 @@ package org.vitrivr.cottontail.database.index
 import org.vitrivr.cottontail.database.entity.Entity
 import org.vitrivr.cottontail.database.index.hash.NonUniqueHashIndex
 import org.vitrivr.cottontail.database.index.hash.UniqueHashIndex
+import org.vitrivr.cottontail.database.index.lsh.superbit.NonBucketingSuperBitLSHIndex
+import org.vitrivr.cottontail.database.index.lsh.superbit.NonBucketingSuperBitLSHIndexConfig
 import org.vitrivr.cottontail.database.index.lsh.superbit.SuperBitLSHIndex
+import org.vitrivr.cottontail.database.index.lsh.superbit.SuperBitLSHIndexConfig
 import org.vitrivr.cottontail.database.index.lucene.LuceneIndex
 import org.vitrivr.cottontail.model.basics.ColumnDef
 import org.vitrivr.cottontail.model.basics.Name
@@ -18,7 +21,8 @@ enum class IndexType(val inexact: Boolean) {
     PQ(true), /* A product quantization based index (for approximate kNN lookup). */
     SH(true), /* A spectral hashing based index (for approximate kNN lookup). */
     LSH(true), /* A locality sensitive hashing based index for approximate kNN lookup with Lp distance. */
-    SUPERBIT_LSH(true); /* A locality sensitive hashing based index for approximate kNN lookup with cosine distance. */
+    SUPERBIT_LSH(true), /* A locality sensitive hashing based index for approximate kNN lookup with cosine distance. */
+    NONBUCKETING_SUPERBIT_LSH(true); /* A locality sensitive hashing based index for approximate kNN lookup with cosine distance. */
 
     /**
      * Opens an index of this [IndexType] using the given name and [Entity].
@@ -31,6 +35,7 @@ enum class IndexType(val inexact: Boolean) {
         HASH -> NonUniqueHashIndex(name, entity, columns)
         LUCENE -> LuceneIndex(name, entity, columns)
         SUPERBIT_LSH -> SuperBitLSHIndex<VectorValue<*>>(name, entity, columns, null)
+        NONBUCKETING_SUPERBIT_LSH -> NonBucketingSuperBitLSHIndex<VectorValue<*>>(name, entity, columns, null)
         else -> TODO()
     }
 
@@ -46,7 +51,8 @@ enum class IndexType(val inexact: Boolean) {
         HASH_UQ -> UniqueHashIndex(name, entity, columns)
         HASH -> NonUniqueHashIndex(name, entity, columns)
         LUCENE -> LuceneIndex(name, entity, columns)
-        SUPERBIT_LSH -> SuperBitLSHIndex<VectorValue<*>>(name, entity, columns, params)
+        SUPERBIT_LSH -> SuperBitLSHIndex<VectorValue<*>>(name, entity, columns, SuperBitLSHIndexConfig.fromParamMap(params))
+        NONBUCKETING_SUPERBIT_LSH -> NonBucketingSuperBitLSHIndex<VectorValue<*>>(name, entity, columns, NonBucketingSuperBitLSHIndexConfig.fromParamMap(params))
         else -> TODO()
     }
 }
