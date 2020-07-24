@@ -28,7 +28,7 @@ class SuperBitLSH(private val s: Int, private val b: Int, d: Int, seed: Long, sp
 
     private val k = s * b / 2
     private val N = computeSuperBitDepth(d, k)
-    private val superBit = SuperBit(d, N, k / N, seed, samplingMethod, species)
+    val superBit = SuperBit(d, N, k / N, seed, samplingMethod, species)
 
     /**
      * Compute the Super-Bit depth N.
@@ -73,7 +73,7 @@ class SuperBitLSH(private val s: Int, private val b: Int, d: Int, seed: Long, sp
     private fun hashSignature(signatureReal: BooleanArray, signatureComplex: BooleanArray? = null): IntArray {
         // create an accumulator for each stage
         // is this hashing locality preserving?
-        require(signatureReal.size == s * b)
+        require(signatureReal.size == k)
         val acc = LongArray(s)
         for (i in 0 until s) {
             acc[i] = 0

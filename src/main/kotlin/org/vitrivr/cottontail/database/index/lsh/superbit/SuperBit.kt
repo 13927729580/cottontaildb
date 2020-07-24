@@ -28,7 +28,7 @@ import java.util.*
  * @author Manuel Huerbin & Ralph Gasser
  * @version 1.1
  */
-class SuperBit(d: Int, N: Int, L: Int, seed: Long, samplingMethod: SamplingMethod, species: VectorValue<*>) : Serializable {
+class SuperBit(val d: Int, val N: Int, val L: Int, val seed: Long, val samplingMethod: SamplingMethod, species: VectorValue<*>) : Serializable {
 
     /** List of hyperplanes held by this [SuperBit]. */
     private val _hyperplanes: Array<VectorValue<*>>
@@ -126,9 +126,7 @@ class SuperBit(d: Int, N: Int, L: Int, seed: Long, samplingMethod: SamplingMetho
 
     /**
      * Compute the signature of a complex vector.
-     * Only the first half of the hyperplanes will be considered.
-     * There will be two bits per hyperplane. One containing information of the real, then one with the sign of the
-     * imaginary part of the IP with the hyperplane
+     * Take every even hyperplane for the real part, every odd one for the imaginary part.
      *
      * todo: are there better ways to incorporate the imaginary part?
      *       if in the end the distance measure is the absolute IP, could we maybe do something like this here?
@@ -137,15 +135,12 @@ class SuperBit(d: Int, N: Int, L: Int, seed: Long, samplingMethod: SamplingMetho
      * @return The signature.
      */
     fun signatureComplex(vector: ComplexVectorValue<*>): BooleanArray {
-        val dots = _hyperplanes.sliceArray(0 until (_hyperplanes.size + 1) / 2).map { // + 1 to get ceil division
-            it.dot(vector)
-        }
         return BooleanArray(_hyperplanes.size) {
             if (it % 2 == 0) {
-                dots[it / 2].real >= 0
+                _hyperplanes[it].dot(vector).real >= 0
             }
             else {
-                dots[it / 2].imaginary >= 0
+                _hyperplanes[it].dot(vector).imaginary >= 0
             }
         }
     }

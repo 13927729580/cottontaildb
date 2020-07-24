@@ -1,6 +1,5 @@
 package org.vitrivr.cottontail.database.index.lsh.superbit
 
-import com.github.doyaaaaaken.kotlincsv.dsl.csvReader
 import com.github.doyaaaaaken.kotlincsv.dsl.csvWriter
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.Arguments
@@ -8,7 +7,6 @@ import org.junit.jupiter.params.provider.MethodSource
 import org.vitrivr.cottontail.math.basics.isApproximatelyTheSame
 import org.vitrivr.cottontail.math.knn.metrics.AbsoluteInnerProductDistance
 import org.vitrivr.cottontail.math.knn.metrics.RealInnerProductDistance
-import org.vitrivr.cottontail.model.values.Complex64Value
 import org.vitrivr.cottontail.model.values.Complex64VectorValue
 import org.vitrivr.cottontail.model.values.DoubleVectorValue
 import org.vitrivr.cottontail.model.values.types.ComplexVectorValue
@@ -40,7 +38,7 @@ internal class SuperBitTest {
         val outDir = File("testOut/complex64")
         val rng = Random(1234)
         val sb = SuperBit(numDim, N, L, 1234, SuperBit.SamplingMethod.UNIFORM, Complex64VectorValue.zero(20))
-        val vectors = getRandomComplexVectors(rng)
+        val vectors = getRandomComplexVectors(rng, numVecs, numDim)
         compareNormalizedVectors(vectors as Array<VectorValue<*>>, sb, File(outDir, "complex64SBLSHSignaturesUniformN${N}L${L}.csv"), true)
     }
 
@@ -51,17 +49,10 @@ internal class SuperBitTest {
         val outDir = File("testOut/complex64")
         val rng = Random(1234)
         val sb = SuperBit(numDim, N, L, 1234, SuperBit.SamplingMethod.GAUSSIAN, Complex64VectorValue.zero(20))
-        val vectors = getRandomComplexVectors(rng)
+        val vectors = getRandomComplexVectors(rng, numVecs, numDim)
         compareNormalizedVectors(vectors as Array<VectorValue<*>>, sb, File(outDir, "complex64SBLSHSignaturesGaussianN${N}L${L}.csv"), true)
     }
 
-    private fun getRandomComplexVectors(rng: Random): Array<Complex64VectorValue> {
-        val vectors = Array(numVecs) {
-            val v = Complex64VectorValue(DoubleArray(numDim * 2) { rng.nextGaussian() })
-            v / v.norm2()
-        }
-        return vectors
-    }
 
     @ParameterizedTest
     @MethodSource("provideConfigurationsForSB")
@@ -69,7 +60,7 @@ internal class SuperBitTest {
         println("N: $N, L: $L")
         val outDir = File("testOut/fromCsv")
         val sb = SuperBit(numDim, N, L, 1234, SuperBit.SamplingMethod.GAUSSIAN, Complex64VectorValue.zero(20))
-        val vectors = getComplexVectorsFromFile()
+        val vectors = getComplexVectorsFromFile("src/test/resources/sampledVectors.csv")
         compareNormalizedVectors(vectors as Array<VectorValue<*>>, sb, File(outDir, "complex64SBLSHSignaturesGaussianN${N}L${L}_withoutImag.csv"), false)
     }
 
@@ -79,7 +70,7 @@ internal class SuperBitTest {
         println("N: $N, L: $L")
         val outDir = File("testOut/fromCsv")
         val sb = SuperBit(numDim, N, L, 1234, SuperBit.SamplingMethod.GAUSSIAN, Complex64VectorValue.zero(20))
-        val vectors = getComplexVectorsFromFile()
+        val vectors = getComplexVectorsFromFile("src/test/resources/sampledVectors.csv")
         compareNormalizedVectors(vectors as Array<VectorValue<*>>, sb, File(outDir, "complex64SBLSHSignaturesGaussianN${N}L${L}_withImag.csv"), true)
     }
 
@@ -89,7 +80,7 @@ internal class SuperBitTest {
         println("N: $N, L: $L")
         val outDir = File("testOut/fromCsv")
         val sb = SuperBit(numDim, N, L, 1234, SuperBit.SamplingMethod.UNIFORM, Complex64VectorValue.zero(20))
-        val vectors = getComplexVectorsFromFile()
+        val vectors = getComplexVectorsFromFile("src/test/resources/sampledVectors.csv")
         compareNormalizedVectors(vectors as Array<VectorValue<*>>, sb, File(outDir, "complex64SBLSHSignaturesUniformN${N}L${L}_withoutImag.csv"), false)
     }
 
@@ -99,20 +90,8 @@ internal class SuperBitTest {
         println("N: $N, L: $L")
         val outDir = File("testOut/fromCsv")
         val sb = SuperBit(numDim, N, L, 1234, SuperBit.SamplingMethod.UNIFORM, Complex64VectorValue.zero(20))
-        val vectors = getComplexVectorsFromFile()
+        val vectors = getComplexVectorsFromFile("src/test/resources/sampledVectors.csv")
         compareNormalizedVectors(vectors as Array<VectorValue<*>>, sb, File(outDir, "complex64SBLSHSignaturesUniformN${N}L${L}_withImag.csv"), true)
-    }
-
-    private fun getComplexVectorsFromFile(): Array<Complex64VectorValue> {
-        val vecs = csvReader().open("src/test/resources/sampledVectors.csv") {
-            readAllAsSequence().drop(1).toList()
-        }
-        println("${vecs.size} vectors read.")
-        val vectors = vecs.map { row ->
-            val v = Complex64VectorValue((0 until numDim).map { Complex64Value(row[it + 1].toDouble(), row[it + 2].toDouble()) }.toTypedArray())
-            v / v.norm2()
-        }.toTypedArray()
-        return vectors
     }
 
     @ParameterizedTest
@@ -121,7 +100,7 @@ internal class SuperBitTest {
         val outDir = File("testOut/real")
         println("N: $N, L: $L")
         val sb = SuperBit(numDim, N, L, 1234, SuperBit.SamplingMethod.GAUSSIAN, DoubleVectorValue.zero(20))
-        val vectors = getRandomRealVectors()
+        val vectors = getRandomRealVectors(Random(1234), numVecs, numDim)
         compareNormalizedVectors(vectors as Array<VectorValue<*>>, sb, File(outDir, "doubleSBLSHSignaturesGaussianN${N}L${L}.csv"), false)
     }
 
@@ -131,18 +110,10 @@ internal class SuperBitTest {
         val outDir = File("testOut/real")
         println("N: $N, L: $L")
         val sb = SuperBit(numDim, N, L, 1234, SuperBit.SamplingMethod.UNIFORM, DoubleVectorValue.zero(20))
-        val vectors = getRandomRealVectors()
+        val vectors = getRandomRealVectors(Random(1234), numVecs, numDim)
         compareNormalizedVectors(vectors as Array<VectorValue<*>>, sb, File(outDir, "doubleSBLSHSignaturesUniformN${N}L${L}.csv"), false)
     }
 
-    private fun getRandomRealVectors(): Array<DoubleVectorValue> {
-        val rng = Random(1234)
-        val vectors = Array(numVecs) {
-            val v = DoubleVectorValue(DoubleArray(numDim) { rng.nextGaussian() })
-            v / v.norm2()
-        }
-        return vectors
-    }
 
     private fun compareNormalizedVectors(vectors: Array<VectorValue<*>>, sb: SuperBit, outCsvFile: File, includeImaginary: Boolean) {
         val signatures = vectors.map {
@@ -154,9 +125,14 @@ internal class SuperBitTest {
             }
         }
 
+        // perform chunked analysis representing stages (analyze signature in chunks of superbits
+        // pendently. This can be thought of as banding described in the Mining Massive Datasets book.
+        // return for all chunksizes if any of the chunks was identical
+        val signatureChunksizes = (sb.N .. sb.L * sb.N step sb.N).toList().filter { (sb.L * sb.N) % it == 0 }
+
         outCsvFile.parentFile.mkdirs()
         csvWriter().open(outCsvFile) {
-            val header = listOf("i", "j", "absoluteIPDist", "realIPDist", "hammingDist")
+            val header = listOf("i", "j", "absoluteIPDist", "realIPDist", "hammingDist") + signatureChunksizes.map { "hasACommonSubSignatureAtChunksize$it" }
             writeRow(header)
             for (i in vectors.indices) {
                 for (j in i until vectors.size) {
@@ -167,7 +143,13 @@ internal class SuperBitTest {
                     val hd = (signatures[i] zip signatures[j]).map { (a, b) ->
                         if (a == b) 0 else 1
                     }.sum()
-                    val data = listOf(i, j, d.value, dreal.value, hd)
+                    val subSignatureCommonalities = signatureChunksizes.map { chunkSize ->
+                        (signatures[i].toList().chunked(chunkSize) zip signatures[j].toList().chunked(chunkSize)).any {
+                            (subSigi, subSigj) ->
+                                subSigi == subSigj
+                        }
+                    }
+                    val data = listOf(i, j, d.value, dreal.value, hd) + subSignatureCommonalities
                     writeRow(data)
                 }
             }
