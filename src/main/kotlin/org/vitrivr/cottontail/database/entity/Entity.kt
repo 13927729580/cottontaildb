@@ -13,10 +13,10 @@ import org.vitrivr.cottontail.database.general.begin
 import org.vitrivr.cottontail.database.index.Index
 import org.vitrivr.cottontail.database.index.IndexTransaction
 import org.vitrivr.cottontail.database.index.IndexType
-import org.vitrivr.cottontail.database.queries.ComparisonOperator
-import org.vitrivr.cottontail.database.queries.predicates.AtomicBooleanPredicate
-import org.vitrivr.cottontail.database.queries.predicates.BooleanPredicate
-import org.vitrivr.cottontail.database.queries.predicates.Predicate
+import org.vitrivr.cottontail.database.queries.components.AtomicBooleanPredicate
+import org.vitrivr.cottontail.database.queries.components.BooleanPredicate
+import org.vitrivr.cottontail.database.queries.components.ComparisonOperator
+import org.vitrivr.cottontail.database.queries.components.Predicate
 import org.vitrivr.cottontail.database.schema.Schema
 import org.vitrivr.cottontail.model.basics.ColumnDef
 import org.vitrivr.cottontail.model.basics.Record
@@ -343,7 +343,7 @@ class Entity(override val name: Name, override val parent: Schema) : DBO {
         }
 
         /** List of all [ColumnDef]s affected by this [Entity.Tx]. */
-        private val columns = this.colTxs.map { it.columnDef }.toTypedArray()
+        val columns = this.colTxs.map { it.columnDef as ColumnDef<*> }.toTypedArray()
 
         /** Flag indicating whether or not this [Entity.Tx] was closed */
         @Volatile
@@ -474,6 +474,16 @@ class Entity(override val name: Name, override val parent: Schema) : DBO {
         override fun count(): Long = this.localLock.read {
             checkValidForRead()
             return this@Entity.header.size
+        }
+
+        /**
+         * Returns the maximum tuple ID occupied by entries in this [Entity].
+         *
+         * @return The maximum tuple ID occupied by entries in this [Entity].
+         */
+        fun maxTupleId(): Long = this.localLock.read {
+            checkValidForRead()
+            return this@Entity.columns.first().maxTupleId
         }
 
         /**

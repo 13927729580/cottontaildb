@@ -95,7 +95,7 @@ interface VectorValue<T: Number> : Value {
      *
      * @return [VectorValue] with the element-wise absolute values.
      */
-    fun abs(): VectorValue<T>
+    fun abs(): RealVectorValue<T>
 
     /**
      * Creates a new [VectorValue] that contains the values this [VectorValue]'s elements raised to the power of x.
@@ -103,14 +103,14 @@ interface VectorValue<T: Number> : Value {
      * @param x The exponent for the operation.
      * @return [VectorValue] with the element-wise values raised to the power of x.
      */
-    fun pow(x: Int): VectorValue<Double>
+    fun pow(x: Int): VectorValue<*>
 
     /**
      * Creates a new [VectorValue] that contains the square root values this [VectorValue]'s elements.
      *
      * @return [VectorValue] with the element-wise square root values.
      */
-    fun sqrt(): VectorValue<Double>
+    fun sqrt(): VectorValue<*>
 
     /**
      * Builds the sum of the elements of this [VectorValue].
@@ -125,7 +125,7 @@ interface VectorValue<T: Number> : Value {
     /**
      * Calculates the magnitude of this [VectorValue] with respect to the L2 / Euclidean distance.
      */
-    fun norm2(): NumericValue<*>
+    fun norm2(): RealValue<*>
 
     /**
      * Builds the dot product between this and the other [VectorValue].
@@ -135,7 +135,7 @@ interface VectorValue<T: Number> : Value {
      *
      * @return Sum of the elements of this [VectorValue].
      */
-    infix fun dot(other: VectorValue<*>): RealValue<*>
+    infix fun dot(other: VectorValue<*>): NumericValue<*>
 
     /**
      * Special implementation of the L1 / Manhattan distance. Can be overridden to create optimized versions of it.
@@ -145,7 +145,7 @@ interface VectorValue<T: Number> : Value {
      *
      * @param other The [VectorValue] to calculate the distance to.
      */
-    infix fun l1(other: VectorValue<*>): NumericValue<*> = ((other-this).abs()).sum()
+    infix fun l1(other: VectorValue<*>): RealValue<*> = ((this - other).abs()).sum().real
 
     /**
      * Special implementation of the L2 / Euclidean distance. Can be overridden to create optimized versions of it.
@@ -155,7 +155,8 @@ interface VectorValue<T: Number> : Value {
      *
      * @param other The [VectorValue] to calculate the distance to.
      */
-    infix fun l2(other: VectorValue<*>): NumericValue<*> = ((other-this).pow(2)).sum().sqrt()
+    infix fun l2(other: VectorValue<*>): RealValue<*> = ((this - other).abs().pow(2)).sum().sqrt().real
+    // todo: abs() will by definition return a vector with components >= 0 and pow() of that can only give reals...
 
     /**
      * Special implementation of the LP / Minkowski distance. Can be overridden to create optimized versions of it.
@@ -165,5 +166,5 @@ interface VectorValue<T: Number> : Value {
      *
      * @param other The [VectorValue] to calculate the distance to.
      */
-    fun lp(other: VectorValue<*>, p: Int): NumericValue<*> = ((other-this).pow(p)).sum().pow(1.0/p)
+    fun lp(other: VectorValue<*>, p: Int): RealValue<*> = ((this - other).abs().pow(p)).sum().pow(1.0 / p).real
 }

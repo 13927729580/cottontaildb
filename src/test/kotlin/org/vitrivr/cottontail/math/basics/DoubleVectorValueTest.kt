@@ -1,15 +1,13 @@
 package org.vitrivr.cottontail.math.basics
 
 import org.apache.commons.math3.linear.ArrayRealVector
-import org.apache.commons.math3.util.MathArrays
-import org.junit.jupiter.api.Assertions
 import org.junit.jupiter.api.RepeatedTest
 import org.vitrivr.cottontail.model.values.DoubleVectorValue
 import java.util.*
 import kotlin.math.pow
 
 /**
- * Some basic test cases that test for correctness fo [DoubleVectorValue] arithmetic operations.
+ * Some basic test cases that test for correctness of [DoubleVectorValue] arithmetic operations.
  *
  * @author Ralph Gasser
  * @version 1.0
@@ -25,11 +23,14 @@ class DoubleVectorValueTest {
         val c1 = DoubleVectorValue.random(size, this.random)
         val c2 = DoubleVectorValue.random(size, this.random)
 
+        val c1p = ArrayRealVector(DoubleArray(c1.data.size) { c1.data[it] })
+        val c2p = ArrayRealVector(DoubleArray(c2.data.size) { c2.data[it]})
+
         val add = c1 + c2
-        val addp = MathArrays.ebeAdd(c1.data, c2.data)
+        val addp = c1p.add(c2p)
 
         for (i in 0 until size) {
-            Assertions.assertEquals(addp[i], add[i].value)
+            isApproximatelyTheSame(addp.getEntry(i).toFloat(), add[i].value)
         }
     }
 
@@ -40,11 +41,14 @@ class DoubleVectorValueTest {
         val c1 = DoubleVectorValue.random(size, this.random)
         val c2 = DoubleVectorValue.random(size, this.random)
 
+        val c1p = ArrayRealVector(DoubleArray(c1.data.size) { c1.data[it] })
+        val c2p = ArrayRealVector(DoubleArray(c2.data.size) { c2.data[it] })
+
         val sub = c1 - c2
-        val subp = MathArrays.ebeSubtract(c1.data, c2.data)
+        val subp = c1p.subtract(c2p)
 
         for (i in 0 until size) {
-            Assertions.assertEquals(subp[i], sub[i].value)
+            isApproximatelyTheSame(subp.getEntry(i).toFloat(), sub[i].value)
         }
     }
 
@@ -55,11 +59,14 @@ class DoubleVectorValueTest {
         val c1 = DoubleVectorValue.random(size, this.random)
         val c2 = DoubleVectorValue.random(size, this.random)
 
+        val c1p = ArrayRealVector(DoubleArray(c1.data.size) { c1.data[it] })
+        val c2p = ArrayRealVector(DoubleArray(c2.data.size) { c2.data[it] })
+
         val mul = c1 * c2
-        val mulp = MathArrays.ebeMultiply(c1.data, c2.data)
+        val mulp = c1p.ebeMultiply(c2p)
 
         for (i in 0 until size) {
-            Assertions.assertEquals(mulp[i], mul[i].value)
+            isApproximatelyTheSame(mulp.getEntry(i).toFloat(), mul[i].value)
         }
     }
 
@@ -70,11 +77,14 @@ class DoubleVectorValueTest {
         val c1 = DoubleVectorValue.random(size, this.random)
         val c2 = DoubleVectorValue.random(size, this.random)
 
+        val c1p = ArrayRealVector(DoubleArray(c1.data.size) { c1.data[it] })
+        val c2p = ArrayRealVector(DoubleArray(c2.data.size) { c2.data[it] })
+
         val div = c1 / c2
-        val divp = MathArrays.ebeDivide(c1.data, c2.data)
+        val divp = c1p.ebeDivide(c2p)
 
         for (i in 0 until size) {
-            Assertions.assertEquals(divp[i], div[i].value)
+            isApproximatelyTheSame(divp.getEntry(i).toFloat(), div[i].value)
         }
     }
 
@@ -90,7 +100,7 @@ class DoubleVectorValueTest {
         val powp = c1p.map { it.pow(exp) }
 
         for (i in 0 until size) {
-            Assertions.assertEquals(powp.getEntry(i), pow[i].value)
+            isApproximatelyTheSame(powp.getEntry(i).toFloat(), pow[i].value.toFloat())
         }
     }
 
@@ -105,7 +115,7 @@ class DoubleVectorValueTest {
         val sqrtp = c1p.map { kotlin.math.sqrt(it) }
 
         for (i in 0 until size) {
-            Assertions.assertEquals(sqrtp.getEntry(i), sqrt[i].value)
+            isApproximatelyTheSame(sqrtp.getEntry(i).toFloat(), sqrt[i].value.toFloat())
         }
     }
 
@@ -116,10 +126,13 @@ class DoubleVectorValueTest {
         val c1 = DoubleVectorValue.random(size, this.random)
         val c2 = DoubleVectorValue.random(size, this.random)
 
-        val l1 = c1.l1(c2)
-        val l1p = MathArrays.distance1(c1.data, c2.data)
+        val c1p = ArrayRealVector(DoubleArray(c1.data.size) { c1.data[it] })
+        val c2p = ArrayRealVector(DoubleArray(c2.data.size) { c2.data[it] })
 
-        Assertions.assertEquals(l1p, l1.value)
+        val l1 = c1.l1(c2)
+        val l1p = c1p.getL1Distance(c2p)
+
+        isApproximatelyTheSame(l1p.toFloat(), l1.value.toFloat())
     }
 
     @RepeatedTest(100)
@@ -129,10 +142,13 @@ class DoubleVectorValueTest {
         val c1 = DoubleVectorValue.random(size, this.random)
         val c2 = DoubleVectorValue.random(size, this.random)
 
-        val l2 = c1.l2(c2)
-        val l2p = MathArrays.distance(c1.data, c2.data)
+        val c1p = ArrayRealVector(DoubleArray(c1.data.size) { c1.data[it] })
+        val c2p = ArrayRealVector(DoubleArray(c2.data.size) { c2.data[it] })
 
-        Assertions.assertEquals(l2p, l2.value)
+        val l2 = c1.l2(c2)
+        val l2p = c1p.getDistance(c2p)
+
+        isApproximatelyTheSame(l2p.toFloat(), l2.value.toFloat())
     }
 
     @RepeatedTest(100)
@@ -142,13 +158,13 @@ class DoubleVectorValueTest {
         val c1 = DoubleVectorValue.random(size, this.random)
         val c2 = DoubleVectorValue.random(size, this.random)
 
-        val c1p = ArrayRealVector(c1.data)
-        val c2p = ArrayRealVector(c2.data)
+        val c1p = ArrayRealVector(DoubleArray(c1.data.size) { c1.data[it] })
+        val c2p = ArrayRealVector(DoubleArray(c2.data.size) { c2.data[it] })
 
         val dot = c1.dot(c2)
         val dotp = c1p.dotProduct(c2p)
 
-        Assertions.assertEquals(dotp, dot.value)
+        isApproximatelyTheSame(dotp.toFloat(), dot.value.toFloat())
     }
 
     @RepeatedTest(100)
@@ -157,11 +173,11 @@ class DoubleVectorValueTest {
 
         val c1 = DoubleVectorValue.random(size, this.random)
 
-        val c1p = ArrayRealVector(c1.data)
+        val c1p = ArrayRealVector(DoubleArray(c1.data.size) { c1.data[it] })
 
         val norm = c1.norm2()
         val normp = c1p.norm
 
-        Assertions.assertEquals(normp, norm.value)
+        isApproximatelyTheSame(normp.toFloat(), norm.value)
     }
 }
