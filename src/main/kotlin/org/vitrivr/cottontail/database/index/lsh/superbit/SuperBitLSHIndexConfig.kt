@@ -20,11 +20,11 @@ data class SuperBitLSHIndexConfig(val buckets: Int, val stages: Int, val seed: L
                         input.unpackInt() != 0,
                         SuperBit.SamplingMethod.values()[input.unpackInt()])
         fun fromParamMap(params: Map<String, String>) = SuperBitLSHIndexConfig(
-            params[SuperBitSLHIndexConfigParamMapKeys.NUM_STAGES.key]!!.toInt(),
-            params[SuperBitSLHIndexConfigParamMapKeys.NUM_BUCKETS.key]!!.toInt(),
-            params[SuperBitSLHIndexConfigParamMapKeys.SEED.key]!!.toLong(),
-            params[SuperBitSLHIndexConfigParamMapKeys.CONSIDER_IMAGINARY.key]!!.toInt() != 0,
-            SuperBit.SamplingMethod.valueOf(params[SuperBitSLHIndexConfigParamMapKeys.SAMPLING_METHOD.key]!!))
+            buckets = params[SuperBitSLHIndexConfigParamMapKeys.NUM_BUCKETS.key]!!.toInt(),
+            stages = params[SuperBitSLHIndexConfigParamMapKeys.NUM_STAGES.key]!!.toInt(),
+            seed = params[SuperBitSLHIndexConfigParamMapKeys.SEED.key]!!.toLong(),
+            considerImaginary = params[SuperBitSLHIndexConfigParamMapKeys.CONSIDER_IMAGINARY.key]!!.toInt() != 0,
+            samplingMethod = SuperBit.SamplingMethod.valueOf(params[SuperBitSLHIndexConfigParamMapKeys.SAMPLING_METHOD.key]!!))
     }
 }
 

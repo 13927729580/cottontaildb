@@ -120,7 +120,10 @@ class SuperBitLSHIndex<T : VectorValue<*>>(name: Name.IndexName, parent: Entity,
                 LOGGER.trace("bucketSignature ${bucketSignature} with ${queryIndexes.size} queries")
                 val tupleIds = HashSet<Long>()
                 bucketSignature.forEachIndexed { stage, bucket ->
-                    tupleIds.addAll(this.maps[stage][bucket]!!.toList())
+                    val longs = this.maps[stage][bucket]
+                    if (longs != null) {
+                        tupleIds.addAll(longs.toList())
+                    }
                 }
                 // building tids takes 15+s for 512 buckets and 4096 query vectors if done before for all queries
                 // not sure if this is the right way... We know already from the bucket list which queries have common
@@ -136,6 +139,10 @@ class SuperBitLSHIndex<T : VectorValue<*>>(name: Name.IndexName, parent: Entity,
                 // but we can more easily pool queries that need the same data at that stage
                 // parallelization is probably easiest by partitioning the data in the db, right? Con is load-imbalance
                 if (LOGGER.isTraceEnabled) LOGGER.trace("bucketSignature ${bucketSignature} has ${tupleIds.size} tIds")
+                if (tupleIds.isEmpty()) {
+                    LOGGER.warn("no tIds found in index. Adding last tuple of entity as default!")
+                    tupleIds.add(tx.maxTupleId())
+                }
                 tupleIds.forEach {
                     val record = tx.read(it)
                     val value = record[predicate.column]

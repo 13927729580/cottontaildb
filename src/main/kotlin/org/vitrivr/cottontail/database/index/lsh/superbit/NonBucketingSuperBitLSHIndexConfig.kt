@@ -22,12 +22,12 @@ data class NonBucketingSuperBitLSHIndexConfig(val superBitDepth: Int, val superB
                         input.unpackInt() != 0,
                         SuperBit.SamplingMethod.values()[input.unpackInt()])
         fun fromParamMap(params: Map<String, String>) = NonBucketingSuperBitLSHIndexConfig(
-                params[SuperBitSLHIndexConfigParamMapKeys.SUPERBIT_DEPTH.key]!!.toInt(),
-                params[SuperBitSLHIndexConfigParamMapKeys.SUPERBITS_PER_STAGE.key]!!.toInt(),
-                params[SuperBitSLHIndexConfigParamMapKeys.NUM_STAGES.key]!!.toInt(),
-                params[SuperBitSLHIndexConfigParamMapKeys.SEED.key]!!.toLong(),
-                params[SuperBitSLHIndexConfigParamMapKeys.CONSIDER_IMAGINARY.key]!!.toInt() != 0,
-                SuperBit.SamplingMethod.valueOf(params[SuperBitSLHIndexConfigParamMapKeys.SAMPLING_METHOD.key]!!))
+                superBitDepth = params[SuperBitSLHIndexConfigParamMapKeys.SUPERBIT_DEPTH.key]!!.toInt(),
+                superBitsPerStage = params[SuperBitSLHIndexConfigParamMapKeys.SUPERBITS_PER_STAGE.key]!!.toInt(),
+                stages = params[SuperBitSLHIndexConfigParamMapKeys.NUM_STAGES.key]!!.toInt(),
+                seed = params[SuperBitSLHIndexConfigParamMapKeys.SEED.key]!!.toLong(),
+                considerImaginary = params[SuperBitSLHIndexConfigParamMapKeys.CONSIDER_IMAGINARY.key]!!.toInt() != 0,
+                samplingMethod = SuperBit.SamplingMethod.valueOf(params[SuperBitSLHIndexConfigParamMapKeys.SAMPLING_METHOD.key]!!))
     }
 
 }
