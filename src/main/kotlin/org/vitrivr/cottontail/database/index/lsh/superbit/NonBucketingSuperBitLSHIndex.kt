@@ -38,7 +38,7 @@ import kotlin.math.abs
  * The [NonBucketingSuperBitLSHIndex] uses a [SuperBit] instance to derive bit-signatures
  * from database and query vectors. The database and query bit-signatures
  * are compared and used to filter candidate database vectors that are likely to
- * have a small cosine distance (or inner product distnace for normalized vectors)
+ * have a small cosine distance (or inner product distance for normalized vectors)
  *
  *
  * @author Gabriel Zihlmann
@@ -52,14 +52,14 @@ class NonBucketingSuperBitLSHIndex<T : VectorValue<*>> (name: Name.IndexName, pa
     }
 
     val config: NonBucketingSuperBitLSHIndexConfig
-    val configOnDisk = this.db.atomicVar(CONFIG_NAME, NonBucketingSuperBitLSHIndexConfig.Serializer).createOrOpen()
+    private val configOnDisk = this.db.atomicVar(CONFIG_NAME, NonBucketingSuperBitLSHIndexConfig.Serializer).createOrOpen()
     val superBit: SuperBit
 
     override val type = IndexType.NONBUCKETING_SUPERBIT_LSH
 
     /* todo: find better way to store the maps (we have List<Boolean>, not String!)
         what about ByteArray? Is this serializable by mapdb that it can be used as map keys?
-        for kotlin it should be a List<Boolean> as these are structurally comapared for equality, not
+        for kotlin it should be a List<Boolean> as these are structurally compared for equality, not
         by reference
         as a proof of concept for correctness, use strings...
         storage overhead is factor of 8! maybe this is too much...
@@ -136,7 +136,7 @@ class NonBucketingSuperBitLSHIndex<T : VectorValue<*>> (name: Name.IndexName, pa
      * @param tx Reference to the [Entity.Tx] the call to this method belongs to.
      */
     override fun rebuild(tx: Entity.Tx) {
-        LOGGER.debug("Rebuilding ${name}")
+        LOGGER.debug("Rebuilding $name")
 
         val local = List(config.stages) {
             HashMap<String, MutableList<Long>>()
@@ -223,7 +223,7 @@ class NonBucketingSuperBitLSHIndex<T : VectorValue<*>> (name: Name.IndexName, pa
         LOGGER.debug("Processing ${queryIndicesPerBucketSignature.size} overall unique signatures for ${predicate.query.size} queries.")
         queryIndicesPerBucketSignature.toList().parallelStream().forEach { (bitSignature, queryIndexes) ->
             LOGGER.debug("Building TIDs for bucketSignature")
-            LOGGER.trace("bucketSignature ${bitSignature} with ${queryIndexes.size} queries")
+            LOGGER.trace("bucketSignature $bitSignature with ${queryIndexes.size} queries")
             val tupleIds = HashSet<Long>()
             bitSignature.chunked(config.superBitDepth * config.superBitsPerStage).forEachIndexed { stage, subSignature ->
                 val elements = this.maps[stage][subSignature.joinToString(separator = "", transform = ::boolToString)]
@@ -231,7 +231,7 @@ class NonBucketingSuperBitLSHIndex<T : VectorValue<*>> (name: Name.IndexName, pa
                     tupleIds.addAll(elements.toList())
                 }
             }
-            if (LOGGER.isTraceEnabled) LOGGER.trace("BitSignature ${bitSignature} has ${tupleIds.size} tIds")
+            if (LOGGER.isTraceEnabled) LOGGER.trace("BitSignature $bitSignature has ${tupleIds.size} tIds")
             if (tupleIds.isEmpty()) {
                 LOGGER.warn("no tIds found in index. Adding last tuple of entity as default!")
                 tupleIds.add(tx.maxTupleId())
