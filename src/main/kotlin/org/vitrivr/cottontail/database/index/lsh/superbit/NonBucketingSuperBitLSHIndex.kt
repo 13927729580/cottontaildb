@@ -12,14 +12,20 @@ import org.vitrivr.cottontail.database.index.lsh.LSHIndex
 import org.vitrivr.cottontail.database.queries.components.KnnPredicate
 import org.vitrivr.cottontail.database.queries.components.Predicate
 import org.vitrivr.cottontail.database.queries.planning.cost.Cost
+import org.vitrivr.cottontail.execution.tasks.entity.knn.KnnUtilities.selectToRecordset
 import org.vitrivr.cottontail.math.knn.metrics.AbsoluteInnerProductDistance
 import org.vitrivr.cottontail.math.knn.metrics.CosineDistance
 import org.vitrivr.cottontail.math.knn.metrics.RealInnerProductDistance
+import org.vitrivr.cottontail.math.knn.selection.ComparablePair
+import org.vitrivr.cottontail.math.knn.selection.MinHeapSelection
+import org.vitrivr.cottontail.math.knn.selection.MinSingleSelection
 import org.vitrivr.cottontail.model.basics.ColumnDef
 import org.vitrivr.cottontail.model.basics.Name
 import org.vitrivr.cottontail.model.exceptions.DatabaseException
+import org.vitrivr.cottontail.model.exceptions.QueryException
 import org.vitrivr.cottontail.model.exceptions.StoreException
 import org.vitrivr.cottontail.model.recordset.Recordset
+import org.vitrivr.cottontail.model.values.DoubleValue
 import org.vitrivr.cottontail.model.values.types.ComplexVectorValue
 import org.vitrivr.cottontail.model.values.types.VectorValue
 import kotlin.math.abs
@@ -42,7 +48,7 @@ class NonBucketingSuperBitLSHIndex<T : VectorValue<*>> (name: Name.IndexName, pa
 
     companion object {
         const val CONFIG_NAME = "nbsblsh_config"
-        private val LOGGER = LoggerFactory.getLogger(this::class.qualifiedName)
+        private val LOGGER = LoggerFactory.getLogger("org.vitrivr.cottontail.database.index.lsh.superbit.NonBucketingSuperBitLSHIndex")
     }
 
     val config: NonBucketingSuperBitLSHIndexConfig
@@ -85,6 +91,7 @@ class NonBucketingSuperBitLSHIndex<T : VectorValue<*>> (name: Name.IndexName, pa
     /**
      * Checks if this [Index] can process the provided [Predicate] and returns true if so and false otherwise.
      * innerproduct distances only with normalized vectors!
+     * currently, we don't support considerImaginary if any query vector is real!
      *
      * @param predicate [Predicate] to check.
      * @return True if [Predicate] can be processed, false otherwise.
@@ -97,6 +104,7 @@ class NonBucketingSuperBitLSHIndex<T : VectorValue<*>> (name: Name.IndexName, pa
                 && (predicate.distance is RealInnerProductDistance
                     || predicate.distance is AbsoluteInnerProductDistance)
             )
+            && (!config.considerImaginary || predicate.query.all { it is ComplexVectorValue<*> })
 
     /**
      * Calculates the cost estimate if this [Index] processing the provided [Predicate].
@@ -135,7 +143,7 @@ class NonBucketingSuperBitLSHIndex<T : VectorValue<*>> (name: Name.IndexName, pa
         }
         tx.forEach {
             val value = it[this.columns[0]]!! as VectorValue<*>
-            val signature = if (value is ComplexVectorValue<*> && config.considerImaginary) {
+            val signature = if (config.considerImaginary && value is ComplexVectorValue<*>) {
                 superBit.signatureComplex(value)
             } else {
                 superBit.signature(value)
@@ -186,9 +194,69 @@ class NonBucketingSuperBitLSHIndex<T : VectorValue<*>> (name: Name.IndexName, pa
      * @throws QueryException.UnsupportedPredicateException If predicate is not supported by [Index].
      */
     override fun filter(predicate: Predicate, tx: Entity.Tx): Recordset {
-        // todo this todo apparently prevents index creation why?
-        TODO("Not yet implemented")
+        require(predicate is KnnPredicate<*> && this.canProcess(predicate)) { throw QueryException.UnsupportedPredicateException("Index '${this.name}' (${this::class.qualifiedName}) does not support the provided predicate of type '${predicate::class.simpleName}'.") }
+
+        /* for each query, we want a set with the tuples that have the same bit signature for at least one stage */
+
+        val knns = Array(predicate.query.size) {
+            if (predicate.k == 1) {
+                MinSingleSelection<ComparablePair<Long, DoubleValue>>()
+            } else {
+                MinHeapSelection<ComparablePair<Long, DoubleValue>>(predicate.k)
+            }
+        }
+
+        /* Generate record set .*/
+
+        /* now find identical signatures that can be treated the same */
+        val queryIndicesPerBucketSignature = HashMap<List<Boolean>, MutableList<Int>>()
+        // we need to store the hash as list because lists are compared structurally, not by reference as arrays are
+        predicate.query.forEachIndexed {queryIndex, query ->
+            if (this.config.considerImaginary) {
+                queryIndicesPerBucketSignature.getOrPut(superBit.signatureComplex(query as ComplexVectorValue<*>).toList()) { mutableListOf() }.add(queryIndex)
+            }
+            else {
+                queryIndicesPerBucketSignature.getOrPut(superBit.signature(query).toList()) { mutableListOf() }.add(queryIndex)
+            }
+        }
+
+        LOGGER.debug("Processing ${queryIndicesPerBucketSignature.size} overall unique signatures for ${predicate.query.size} queries.")
+        queryIndicesPerBucketSignature.toList().parallelStream().forEach { (bitSignature, queryIndexes) ->
+            LOGGER.debug("Building TIDs for bucketSignature")
+            LOGGER.trace("bucketSignature ${bitSignature} with ${queryIndexes.size} queries")
+            val tupleIds = HashSet<Long>()
+            bitSignature.chunked(config.superBitDepth * config.superBitsPerStage).forEachIndexed { stage, subSignature ->
+                val elements = this.maps[stage][subSignature.joinToString(separator = "", transform = ::boolToString)]
+                if (elements != null) {
+                    tupleIds.addAll(elements.toList())
+                }
+            }
+            if (LOGGER.isTraceEnabled) LOGGER.trace("BitSignature ${bitSignature} has ${tupleIds.size} tIds")
+            if (tupleIds.isEmpty()) {
+                LOGGER.warn("no tIds found in index. Adding last tuple of entity as default!")
+                tupleIds.add(tx.maxTupleId())
+            }
+            tupleIds.forEach {
+                val record = tx.read(it)
+                val value = record[predicate.column]
+                if (value is VectorValue<*>) {
+                    queryIndexes.forEach {queryIndex ->
+                        val query = predicate.query[queryIndex]
+                        if (predicate.weights != null) {
+                            knns[queryIndex].offer(ComparablePair(it, predicate.distance(query, value, predicate.weights[queryIndex])))
+                        } else {
+                            knns[queryIndex].offer(ComparablePair(it, predicate.distance(query, value)))
+                        }
+                    }
+                }
+            }
+        }
+        LOGGER.debug("Done. Creating Recordset.")
+        val recordset = selectToRecordset(this.produces.first(), knns.toList())
+
+        LOGGER.debug("Done.")
+        return recordset
     }
 
-    private inline fun boolToString(b: Boolean): String = if (b) "1" else "0"
+    private fun boolToString(b: Boolean): String = if (b) "1" else "0"
 }
