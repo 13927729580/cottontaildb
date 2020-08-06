@@ -100,9 +100,8 @@ class NonBucketingSuperBitLSHIndex<T : VectorValue<*>> (name: Name.IndexName, pa
             predicate is KnnPredicate<*>
             && predicate.columns.first() == this.columns.first()
             && (predicate.distance is CosineDistance
-                || abs(predicate.query.first().norm2().asDouble().value - 1.0) < 1e-15
-                && (predicate.distance is RealInnerProductDistance
-                    || predicate.distance is AbsoluteInnerProductDistance)
+                || predicate.distance is RealInnerProductDistance
+                || predicate.distance is AbsoluteInnerProductDistance
             )
             && (!config.considerImaginary || predicate.query.all { it is ComplexVectorValue<*> })
 

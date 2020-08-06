@@ -26,6 +26,7 @@ import org.vitrivr.cottontail.model.exceptions.QueryException
 import org.vitrivr.cottontail.model.exceptions.StoreException
 import org.vitrivr.cottontail.model.recordset.Recordset
 import org.vitrivr.cottontail.model.values.DoubleValue
+import org.vitrivr.cottontail.model.values.types.ComplexVectorValue
 import org.vitrivr.cottontail.model.values.types.VectorValue
 import kotlin.collections.HashMap
 import kotlin.collections.HashSet
@@ -231,16 +232,13 @@ class SuperBitLSHIndex<T : VectorValue<*>>(name: Name.IndexName, parent: Entity,
      * @param predicate The [Predicate] to check.
      * @return True if [Predicate] can be processed, false otherwise.
      */
-    override fun canProcess(predicate: Predicate): Boolean = if (predicate is KnnPredicate<*>) {
-        predicate.columns.first() == this.columns[0] && (
-                predicate.distance is CosineDistance ||
-                        abs(predicate.query.first().norm2().asDouble().value - 1.0) < 1e-15 &&
-                        (predicate.distance is RealInnerProductDistance ||
-                                predicate.distance is AbsoluteInnerProductDistance)
-                )
-    } else {
-        false
-    }
+    override fun canProcess(predicate: Predicate): Boolean =
+        predicate is KnnPredicate<*>
+        && predicate.columns.first() == this.columns[0]
+        && (predicate.distance is CosineDistance
+            || predicate.distance is RealInnerProductDistance
+            || predicate.distance is AbsoluteInnerProductDistance)
+        && (!config.considerImaginary || predicate.query.all { it is ComplexVectorValue<*> })
 
     /**
      * Calculates the cost estimate of this [SuperBitLSHIndex] processing the provided [Predicate].
