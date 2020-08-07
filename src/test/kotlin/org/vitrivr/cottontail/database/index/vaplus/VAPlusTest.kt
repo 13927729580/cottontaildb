@@ -14,7 +14,7 @@ internal class VAPlusTest {
     val data = Array(10) {
         DoubleArray(20) { random.nextGaussian() }
     }
-    val marks = MarksGenerator.getEquidistantMarks(data, IntArray(data.first().size) { 3 })
+    val marks = MarksGenerator.getEquidistantMarks(data, IntArray(data.first().size) { 100 })
 
     @Test
     fun computeBounds() {
@@ -43,6 +43,12 @@ internal class VAPlusTest {
     fun boundL2() {
         // this is a test implementing what's on p8 top of blott&weber 1997
         for (vector in data) {
+            /*
+            todo: there will be an indexOutOfBounds error if the vector component is not contained in the marks!
+                  this can happen if the marks are not generated based on the entire data in the DB, but just sampled
+                  from there! We could artificially add the Double.Max_VALUE and MIN_VALUE to the marks to catch this
+                  see MarksGenerator
+            */
             val query = DoubleArray(vector.size) { random.nextGaussian() }
             val cellsVec = vap.getCells(vector, marks)
             val cellsQuery = vap.getCells(query, marks)
