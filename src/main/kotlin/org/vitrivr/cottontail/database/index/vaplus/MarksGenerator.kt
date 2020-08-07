@@ -92,14 +92,37 @@ object MarksGenerator {
     }
 
     /**
-     * Create marks per dimension (equally spaced).
+     * Create marks per dimension (equally spaced). Min and Max of data are included -> only makes sense to require
+     * at least 3 marks
      */
     fun getEquidistantMarks(data: Array<DoubleArray>, marksPerDimension: IntArray): Array<DoubleArray> {
         val min = getMin(data)
         val max = getMax(data)
         return Array(min.size) { i ->
-            DoubleArray(marksPerDimension[i] * 2) {
-                it * (max[i] - min[i]) / (marksPerDimension[i] * 2 - 1) + min[i]
+            require(marksPerDimension[i] > 2) { "Need to request more than 2 mark per dimension! (Faulty dimension: $i)" }
+            val a = DoubleArray(marksPerDimension[i]) {
+                min[i] + it * (max[i] - min[i]) / (marksPerDimension[i] - 1)
+            }// subtract small amount to ensure min is included to avoid problems with FP approximations
+            // also add small amount for last
+            a[0] -= 1e-9
+            a[a.lastIndex] += 1e-9
+            a
+        }
+    }
+
+    /**
+     * Create marks per dimension (equally spaced). Min and max of data are not included! -> 1 mark is in middle
+     * of data range, 2 marks divide the range into 3 thirds, etc...
+     */
+    fun getEquidistantMarksWithoutMinMax(data: Array<DoubleArray>, marksPerDimension: IntArray): Array<DoubleArray> {
+        val min = getMin(data)
+        val max = getMax(data)
+        return Array(min.size) { i ->
+            require(marksPerDimension[i] > 0) { "Need to request at least 1 mark per dimension! (Faulty dimension: $i)" }
+            val range = max[i] - min[i]
+            val spacing = range / (marksPerDimension[i] + 1)
+            DoubleArray(marksPerDimension[i]) {
+                min[i] + (it + 1) * spacing
             }
         }
     }

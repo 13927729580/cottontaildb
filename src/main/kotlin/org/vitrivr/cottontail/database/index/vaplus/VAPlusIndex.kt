@@ -114,6 +114,8 @@ class VAPlusIndex(override val name: Name.IndexName, override val parent: Entity
             val vector = meta.kltMatrix.multiply(dataMatrix.transpose()).getColumnVector(0).toArray()
 
             val bounds = vaPlus.computeBounds(vector, meta.marks)
+            // what for?? why do we need bounds for query? we have it exactly... we need to get bounds
+            // of data vectors and from there estimate bounds on IP or L2...
             val (lbIndex, lbBounds) = vaPlus.compressBounds(bounds.first)
             val (ubIndex, ubBounds) = vaPlus.compressBounds(bounds.second)
 
@@ -238,7 +240,7 @@ class VAPlusIndex(override val name: Name.IndexName, override val parent: Entity
 
 
     /**
-     * Calculates bound for given signature.
+     * Calculates bound for given signature. What bounds? Square L2 dist?
      *
      * @param cells Signature for the vector from the collection.
      * @param bounds Vector containing bounds for query vector.

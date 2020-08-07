@@ -148,14 +148,17 @@ class VAPlus : Serializable {
      * This method checks for every mark if the corresponding vector is beyond or not.
      * If so, mark before is the corresponding mark.
      *
+     * Note that this can return -1, which means that the component is smaller than the smallest mark!
+     * This can arise e.g. if marks are not generated from entire dataset, but just a sampled subset thereof!
+     *
      * @param vector The vector.
      * @param marks The marks.
      * @return An [IntArray] containing the signature of the vector.
      */
     fun getCells(vector: DoubleArray, marks: Array<DoubleArray>): IntArray = IntArray(vector.size) {
-        val index = marks[it].indexOfFirst { i -> i >= vector[it] }
-        if (index == -1) {
-            marks[it].size - 2
+        val index = marks[it].indexOfFirst { i -> i > vector[it] }
+        if (index == -1) { // all marks are less or equal than the vector component! last mark is what we're looking for!
+            marks[it].size - 1
         } else {
             index - 1
         }
@@ -196,7 +199,7 @@ class VAPlus : Serializable {
 
     /* Querying */
     /**
-     * This method computes bounds.
+     * This method computes bounds. What kinds of bounds?
      */
     fun computeBounds(vector: DoubleArray, marks: Array<DoubleArray>): Pair<Array<DoubleArray>, Array<DoubleArray>> {
         val lbounds = Array(marks.size) { DoubleArray(maxOf(0, marks[it].size - 1)) }
