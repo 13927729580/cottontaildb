@@ -8,16 +8,19 @@ import org.vitrivr.cottontail.model.values.DoubleVectorValue
 
 import java.util.*
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.pow
 
 internal class VAPlusTest {
     val vap = VAPlus()
     val random = Random(1234)
-    val realdata = Array(10) {
-        DoubleArray(20) { random.nextGaussian() }
+    val numVecs = 100
+    val numDim = 20
+    val realdata = Array(numVecs) {
+        DoubleArray(numDim) { random.nextGaussian() }
     }
-    val imaginarydata = Array(10) { // imaginary parts
-        DoubleArray(20) { random.nextGaussian() }
+    val imaginarydata = Array(numVecs) { // imaginary parts
+        DoubleArray(numDim) { random.nextGaussian() }
     }
     val realmarks = MarksGenerator.getEquidistantMarks(realdata, IntArray(realdata.first().size) { 100 })
     val imaginarymarks = MarksGenerator.getEquidistantMarks(imaginarydata, IntArray(imaginarydata.first().size) { 100 })
@@ -117,10 +120,7 @@ internal class VAPlusTest {
     }
 
     /*
-    we can reliably get bounds on the real or imaginary part of the product, but not on the magnitude!
-    this is because of the non-monotonicity of abs()...
-    large negative values will become large positive values...
-    we can't make any assumption on the sign of the vector components...
+    Tests whether the upper and lower bounds on the real and imaginary
      */
     @Test
     fun boundComplexDotProduct() {
@@ -137,15 +137,24 @@ internal class VAPlusTest {
             val DPReal = dot.real.value
             val DPImag = dot.imaginary.value
             println("actual real part of dot product $DPReal")
-            println("actual imaginary part of dot product $DPImag")
             println("lb of DPReal $lbDPReal")
-            println("lb of DPImag $lbDPImag")
             println("ub of DPReal $ubDPReal")
+            println("actual imaginary part of dot product $DPImag")
+            println("lb of DPImag $lbDPImag")
             println("ub of DPImag $ubDPImag")
             assertTrue(DPReal >= lbDPReal, "actual DPReal smaller than lower bound!")
             assertTrue(DPImag >= lbDPImag, "actual DPImag smaller than lower bound!")
             assertTrue(DPReal <= ubDPReal, "actual DPReal greater than upper bound!")
             assertTrue(DPImag <= ubDPImag, "actual DPImag greater than upper bound!")
+
+            val lbDPabs = (min(lbDPReal.pow(2), ubDPReal.pow(2)) + min(lbDPImag.pow(2), ubDPImag.pow(2))).pow(0.5)
+            val ubDPabs = (max(lbDPReal.pow(2), ubDPReal.pow(2)) + max(lbDPImag.pow(2), ubDPImag.pow(2))).pow(0.5)
+            val dpabs = dot.abs().value
+            println("actual magnitude of dot product $dpabs")
+            println("lb of dpabs $lbDPabs")
+            println("ub of dpabs $ubDPabs")
+            assertTrue(dpabs >= lbDPabs, "actual DPabs smaller than lower bound!")
+            assertTrue(dpabs <= ubDPabs, "actual DPabs greater than upper bound!")
         }
     }
 
