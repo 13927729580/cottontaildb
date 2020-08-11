@@ -1,12 +1,12 @@
-package org.vitrivr.cottontail.database.index.vaplus
+package org.vitrivr.cottontail.database.index.va.marks
 
-import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+
+import org.junit.jupiter.api.Assertions.*
 import org.vitrivr.cottontail.model.values.Complex64Value
 import org.vitrivr.cottontail.model.values.Complex64VectorValue
 import org.vitrivr.cottontail.model.values.DoubleVectorValue
 import org.vitrivr.cottontail.testutils.getComplexVectorsFromFile
-
 import java.util.*
 import kotlin.math.max
 import kotlin.math.min
@@ -15,8 +15,7 @@ import kotlin.math.sign
 import kotlin.reflect.full.createType
 import kotlin.reflect.full.declaredMemberProperties
 
-internal class VAPlusTest {
-    val vap = VAPlus()
+internal class MarksTest {
     val random = Random(1234)
     val numVecs = 100
     val numDim = 20
@@ -24,36 +23,27 @@ internal class VAPlusTest {
     val realdata = Array(numVecs) {
         DoubleArray(numDim) { random.nextGaussian() }
     }
+
     val imaginarydata = Array(numVecs) { // imaginary parts
         DoubleArray(numDim) { random.nextGaussian() }
     }
     val realmarks = MarksGenerator.getEquidistantMarks(realdata, IntArray(realdata.first().size) { marksPerDim })
     val imaginarymarks = MarksGenerator.getEquidistantMarks(imaginarydata, IntArray(imaginarydata.first().size) { marksPerDim })
 
-    data class BoundTighness(val lbDistReal: Double,
-                             val ubDistReal: Double,
-                             val lbDistImag: Double,
-                             val ubDistImag: Double,
-                             val lbDistAbs: Double,
-                             val ubDistAbs: Double
+    data class BoundTightness(val lbDistReal: Double,
+                              val ubDistReal: Double,
+                              val lbDistImag: Double,
+                              val ubDistImag: Double,
+                              val lbDistAbs: Double,
+                              val ubDistAbs: Double
     )
-    @Test
-    fun computeBounds() {
-        val vector = realdata.first()
-        val bounds = vap.computeBounds(vector, realmarks)
-        println("vector")
-        println(vector.joinToString())
-        println("bounds first (lbounds)")
-        bounds.first.forEach { println(it.joinToString()) }
-        println("bounds second (ubounds)")
-        bounds.second.forEach { println(it.joinToString()) }
-    }
 
     @Test
     fun getCells() {
-        val cells = vap.getCells(realdata.first(), realmarks)
+        val marks = MarksGenerator.getEquidistantMarks(realdata, IntArray(numDim) { marksPerDim })
+        val cells = marks.getCells(realdata.first())
         println("marks")
-        for (m in realmarks) {
+        for (m in marks.marks) {
             println(m.joinToString())
         }
         println("cells")
@@ -71,8 +61,7 @@ internal class VAPlusTest {
                   see MarksGenerator
             */
             val query = DoubleArray(vector.size) { random.nextGaussian() }
-            val cellsVec = vap.getCells(vector, realmarks)
-            val cellsQuery = vap.getCells(query, realmarks)
+            val cellsVec = realmarks.getCells(vector)
             val realmarks = realmarks
             val lbl2sq = lowerBoundComponentDifferences(cellsVec, query, realmarks).map { it.pow(2) }.sum()
             val ubl2sq = upperBoundComponentDifferences(cellsVec, query, realmarks).map { it.pow(2) }.sum()
@@ -96,8 +85,8 @@ internal class VAPlusTest {
             */
             val queryReal = DoubleArray(vectorReal.size) { random.nextGaussian() }
             val queryImag = DoubleArray(vectorImag.size) { random.nextGaussian() }
-            val cellsVecReal = vap.getCells(vectorReal, realmarks)
-            val cellsVecImag = vap.getCells(vectorImag, imaginarymarks)
+            val cellsVecReal = realmarks.getCells(vectorReal)
+            val cellsVecImag = imaginarymarks.getCells(vectorImag)
             val lbl2sqReal = lowerBoundComponentDifferences(cellsVecReal, queryReal, realmarks).map { it.pow(2) }.sum()
             val lbl2sqImag = lowerBoundComponentDifferences(cellsVecImag, queryImag, imaginarymarks).map { it.pow(2) }.sum()
             val lbl2sq = lbl2sqReal + lbl2sqImag
@@ -119,7 +108,7 @@ internal class VAPlusTest {
     fun boundRealDotProduct() {
         realdata.forEach { vector ->
             val query = DoubleArray(vector.size) { random.nextGaussian() }
-            val cellsVec = vap.getCells(vector, realmarks)
+            val cellsVec = realmarks.getCells(vector)
             val lbDP = lowerBoundComponentProductsSum(cellsVec, query, realmarks)
             val ubDP = upperBoundComponentProductsSum(cellsVec, query, realmarks)
             val DP = DoubleVectorValue(vector).dot(DoubleVectorValue(query))
@@ -136,7 +125,7 @@ internal class VAPlusTest {
      */
     @Test
     fun boundComplexDotProduct() {
-        val boundTightnesses = (realdata zip imaginarydata).map {
+        (realdata zip imaginarydata).map {
             testComplexInnerProductBounds(
                     it.first,
                     it.second,
@@ -148,16 +137,14 @@ internal class VAPlusTest {
         }
     }
 
-    private fun testComplexInnerProductBounds(realParts: DoubleArray, imaginaryParts: DoubleArray, queryReal: DoubleArray, queryImag: DoubleArray, marksReal: Array<DoubleArray>, marksImag: Array<DoubleArray>): BoundTighness {
-        val vecReal = realParts
-        val vecImag = imaginaryParts
-        val cellsVecReal = vap.getCells(vecReal, marksReal)
-        val cellsVecImag = vap.getCells(vecImag, marksImag)
+    private fun testComplexInnerProductBounds(realParts: DoubleArray, imaginaryParts: DoubleArray, queryReal: DoubleArray, queryImag: DoubleArray, marksReal: Marks, marksImag: Marks): BoundTightness {
+        val cellsVecReal = marksReal.getCells(realParts)
+        val cellsVecImag = marksImag.getCells(imaginaryParts)
         val lbDPReal = lbComplexInnerProductReal(cellsVecReal, queryReal, cellsVecImag, queryImag, marksReal, marksImag)
         val lbDPImag = lbComplexInnerProductImag(cellsVecImag, queryReal, cellsVecReal, queryImag, marksReal, marksImag)
         val ubDPReal = ubComplexInnerProductReal(cellsVecReal, queryReal, cellsVecImag, queryImag, marksReal, marksImag)
         val ubDPImag = ubComplexInnerProductImag(cellsVecImag, queryReal, cellsVecReal, queryImag, marksReal, marksImag)
-        val dot = Complex64VectorValue((vecReal zip vecImag).map { (a, b) -> Complex64Value(a, b) }.toTypedArray()).dot(Complex64VectorValue((queryReal zip queryImag).map { (a, b) -> Complex64Value(a, b) }.toTypedArray()))
+        val dot = Complex64VectorValue((realParts zip imaginaryParts).map { (a, b) -> Complex64Value(a, b) }.toTypedArray()).dot(Complex64VectorValue((queryReal zip queryImag).map { (a, b) -> Complex64Value(a, b) }.toTypedArray()))
         val DPReal = dot.real.value
         val DPImag = dot.imaginary.value
         println("actual real part of dot product $DPReal")
@@ -179,7 +166,7 @@ internal class VAPlusTest {
         println("ub of dpabs $ubDPabs")
         assertTrue(dpabs >= lbDPabs, "actual DPabs smaller than lower bound!")
         assertTrue(dpabs <= ubDPabs, "actual DPabs greater than upper bound!")
-        return BoundTighness(DPReal - lbDPReal, ubDPReal - DPReal, DPImag - lbDPImag, ubDPImag - DPImag, dpabs - lbDPabs, ubDPabs - dpabs)
+        return BoundTightness(DPReal - lbDPReal, ubDPReal - DPReal, DPImag - lbDPImag, ubDPImag - DPImag, dpabs - lbDPabs, ubDPabs - dpabs)
     }
 
     private fun ubAbsoluteComplexInnerProduct(lbDPReal: Double, ubDPReal: Double, lbDPImag: Double, ubDPImag: Double) =
@@ -191,24 +178,24 @@ internal class VAPlusTest {
             } else {
                 min(lbDPReal.pow(2), ubDPReal.pow(2))
             }
-            +
-            (if (lbDPImag.sign != ubDPImag.sign) {
-                0.0
-            } else {
-                min(lbDPImag.pow(2), ubDPImag.pow(2))
-            })
-            ).pow(0.5)
+                    +
+                    (if (lbDPImag.sign != ubDPImag.sign) {
+                        0.0
+                    } else {
+                        min(lbDPImag.pow(2), ubDPImag.pow(2))
+                    })
+                    ).pow(0.5)
 
-    private fun ubComplexInnerProductImag(cellsVecImag: IntArray, queryReal: DoubleArray, cellsVecReal: IntArray, queryImag: DoubleArray, marksReal: Array<DoubleArray>, marksImag: Array<DoubleArray>) =
+    private fun ubComplexInnerProductImag(cellsVecImag: IntArray, queryReal: DoubleArray, cellsVecReal: IntArray, queryImag: DoubleArray, marksReal: Marks, marksImag: Marks) =
             upperBoundComponentProductsSum(cellsVecImag, queryReal, marksImag) - lowerBoundComponentProductsSum(cellsVecReal, queryImag, marksReal)
 
-    private fun ubComplexInnerProductReal(cellsVecReal: IntArray, queryReal: DoubleArray, cellsVecImag: IntArray, queryImag: DoubleArray, marksReal: Array<DoubleArray>, marksImag: Array<DoubleArray>) =
+    private fun ubComplexInnerProductReal(cellsVecReal: IntArray, queryReal: DoubleArray, cellsVecImag: IntArray, queryImag: DoubleArray, marksReal: Marks, marksImag: Marks) =
             upperBoundComponentProductsSum(cellsVecReal, queryReal, marksReal) + upperBoundComponentProductsSum(cellsVecImag, queryImag, marksImag)
 
-    private fun lbComplexInnerProductImag(cellsVecImag: IntArray, queryReal: DoubleArray, cellsVecReal: IntArray, queryImag: DoubleArray, marksReal: Array<DoubleArray>, marksImag: Array<DoubleArray>) =
+    private fun lbComplexInnerProductImag(cellsVecImag: IntArray, queryReal: DoubleArray, cellsVecReal: IntArray, queryImag: DoubleArray, marksReal: Marks, marksImag: Marks) =
             lowerBoundComponentProductsSum(cellsVecImag, queryReal, marksImag) - upperBoundComponentProductsSum(cellsVecReal, queryImag, marksReal)
 
-    private fun lbComplexInnerProductReal(cellsVecReal: IntArray, queryReal: DoubleArray, cellsVecImag: IntArray, queryImag: DoubleArray, marksReal: Array<DoubleArray>, marksImag: Array<DoubleArray>) =
+    private fun lbComplexInnerProductReal(cellsVecReal: IntArray, queryReal: DoubleArray, cellsVecImag: IntArray, queryImag: DoubleArray, marksReal: Marks, marksImag: Marks) =
             lowerBoundComponentProductsSum(cellsVecReal, queryReal, marksReal) + lowerBoundComponentProductsSum(cellsVecImag, queryImag, marksImag)
 
     @ExperimentalStdlibApi
@@ -240,7 +227,7 @@ internal class VAPlusTest {
                 testComplexInnerProductBounds(dataReal[i], dataImag[i], dataReal[j], dataImag[j], marksRealEquallyPopulated, marksImagEquallyPopulated)
             }
         }
-        BoundTighness::class.declaredMemberProperties.filter {p -> p.returnType == Double::class.createType()}.forEach { p ->
+        BoundTightness::class.declaredMemberProperties.filter { p -> p.returnType == Double::class.createType()}.forEach { p ->
             listOf(boundTightnessesUniform to "uniform",
                     boundTightnessesNonUniform to "nonUniform",
                     boundTightnessesEquallyPopulated to "equallyPopulated").forEach {
@@ -260,11 +247,11 @@ internal class VAPlusTest {
     Blott & Weber 1997 p.8 top
     todo: move out of test to actual code
      */
-    private fun upperBoundComponentDifferences(cellsVec: IntArray, query: DoubleArray, marks: Array<DoubleArray>): List<Double> {
-        val cellsQuery = vap.getCells(query, marks)
+    private fun upperBoundComponentDifferences(cellsVec: IntArray, query: DoubleArray, marks: Marks): List<Double> {
+        val cellsQuery = marks.getCells(query)
         return (cellsVec zip cellsQuery).mapIndexed { i, (v, cq) ->
-            val a = { query[i] - marks[i][v] }
-            val b = { marks[i][v + 1] - query[i] }
+            val a = { query[i] - marks.marks[i][v] }
+            val b = { marks.marks[i][v + 1] - query[i] }
             when {
                 v < cq -> {
                     a()
@@ -283,18 +270,18 @@ internal class VAPlusTest {
     Blott & Weber 1997 p.8 top
     todo: move out of test to actual code
      */
-    private fun lowerBoundComponentDifferences(cellsVec: IntArray, query: DoubleArray, marks: Array<DoubleArray>): List<Double> {
-        val cellsQuery = vap.getCells(query, marks)
+    private fun lowerBoundComponentDifferences(cellsVec: IntArray, query: DoubleArray, marks: Marks): List<Double> {
+        val cellsQuery = marks.getCells(query)
         return (cellsVec zip cellsQuery).mapIndexed { i, (v, q) ->
             when {
                 v < q -> {
-                    query[i] - marks[i][v + 1]
+                    query[i] - marks.marks[i][v + 1]
                 }
                 v == q -> {
                     0.0
                 }
                 else -> {
-                    marks[i][v] - query[i]
+                    marks.marks[i][v] - query[i]
                 }
             }
         }
@@ -305,12 +292,12 @@ internal class VAPlusTest {
     sum of element-by-element products (i.e. it returns a lower bound on the real dot product)
     todo: move out of test to actual code
      */
-    private fun lowerBoundComponentProductsSum(cellsVec: IntArray, query: DoubleArray, marks: Array<DoubleArray>): Double {
+    private fun lowerBoundComponentProductsSum(cellsVec: IntArray, query: DoubleArray, marks: Marks): Double {
         return cellsVec.mapIndexed { i, cv ->
             if (query[i] < 0) {
-                marks[i][cv + 1] * query[i]
+                marks.marks[i][cv + 1] * query[i]
             } else {
-                marks[i][cv] * query[i]
+                marks.marks[i][cv] * query[i]
             }
         }.sum()
     }
@@ -321,12 +308,12 @@ internal class VAPlusTest {
     Real vector means that this can be a vector of real parts or a vector of imaginary parts.
     todo: move out of test to actual code
      */
-    private fun upperBoundComponentProductsSum(cellsVec: IntArray, query: DoubleArray, marks: Array<DoubleArray>): Double {
+    private fun upperBoundComponentProductsSum(cellsVec: IntArray, query: DoubleArray, marks: Marks): Double {
         return cellsVec.mapIndexed { i, cv ->
             if (query[i] < 0) {
-                marks[i][cv] * query[i]
+                marks.marks[i][cv] * query[i]
             } else {
-                marks[i][cv + 1] * query[i]
+                marks.marks[i][cv + 1] * query[i]
             }
         }.sum()
     }

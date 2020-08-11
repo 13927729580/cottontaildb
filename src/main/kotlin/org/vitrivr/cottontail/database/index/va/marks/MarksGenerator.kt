@@ -1,9 +1,8 @@
-package org.vitrivr.cottontail.database.index.vaplus
+package org.vitrivr.cottontail.database.index.va.marks
 
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
-import kotlin.math.roundToInt
 
 object MarksGenerator {
     /** */
@@ -13,7 +12,7 @@ object MarksGenerator {
      * Get marks.
      * Todo: Tests indicate that these marks are less tight than the equidistant ones
      */
-    fun getNonUniformMarks(data: Array<DoubleArray>, marksPerDimension: IntArray): Array<DoubleArray> {
+    fun getNonUniformMarks(data: Array<DoubleArray>, marksPerDimension: IntArray): Marks {
         val marks = getEquidistantMarks(data, marksPerDimension)
 
         /**
@@ -36,13 +35,13 @@ object MarksGenerator {
                  * Calculate mean of data points in interval (rj).
                  * Return list of mean of every interval in d (rjs).
                  */
-                val rjs = Array(marks[d].size - 1) { c ->
+                val rjs = Array(marks.marks[d].size - 1) { c ->
                     var rj = 0.0
                     var rjAll = 0.0
                     var count = 0
                     var countAll = 0
                     data.forEach {
-                        if (it[d] >= marks[d][c] && it[d] < marks[d][c + 1]) {
+                        if (it[d] >= marks.marks[d][c] && it[d] < marks.marks[d][c + 1]) {
                             rj += it[d]
                             count += 1
                         }
@@ -62,8 +61,8 @@ object MarksGenerator {
                  * Adjust marks (moving along distance, no long equidistance)
                  * The mark at position c is adjusted with "(first mean value + second mean value) / 2"
                  */
-                (1 until marks[d].size - 1).forEach { c ->
-                    marks[d][c] = (rjs[c - 1] + rjs[c]) / 2
+                (1 until marks.marks[d].size - 1).forEach { c ->
+                    marks.marks[d][c] = (rjs[c - 1] + rjs[c]) / 2
                 }
 
                 // pseudocode line 8
@@ -75,17 +74,17 @@ object MarksGenerator {
                  * tmp = (difference between data point and c).pow(2) = euclidean distance
                  * if distance > 0.999 then break
                  */
-                deltaBar = (0 until marks[d].size - 1).sumByDouble { c ->
+                deltaBar = (0 until marks.marks[d].size - 1).sumByDouble { c ->
                     var tmp = 0.0
                     data.forEach {
-                        if (it[d] >= marks[d][c] && it[d] < marks[d][c + 1]) {
+                        if (it[d] >= marks.marks[d][c] && it[d] < marks.marks[d][c + 1]) {
                             tmp += (it[d] - rjs[c]).pow(2)
                         }
                     }
                     tmp
                 }
             } while ((delta - deltaBar) / delta < 0.999)
-            marks[d].sort()
+            marks.marks[d].sort()
         }
         return marks
     }
@@ -95,10 +94,10 @@ object MarksGenerator {
      * at least 3 marks
      * note: blott & weber are referring to marks that yield equally populated regions, not equidistant marks
      */
-    fun getEquidistantMarks(data: Array<DoubleArray>, marksPerDimension: IntArray): Array<DoubleArray> {
+    fun getEquidistantMarks(data: Array<DoubleArray>, marksPerDimension: IntArray): Marks {
         val min = getMin(data)
         val max = getMax(data)
-        return Array(min.size) { i ->
+        return Marks(Array(min.size) { i ->
             require(marksPerDimension[i] > 2) { "Need to request more than 2 mark per dimension! (Faulty dimension: $i)" }
             val a = DoubleArray(marksPerDimension[i]) {
                 min[i] + it * (max[i] - min[i]) / (marksPerDimension[i] - 1)
@@ -107,24 +106,24 @@ object MarksGenerator {
             a[0] -= EPSILON
             a[a.lastIndex] += EPSILON
             a
-        }
+        })
     }
 
     /**
      * Create marks per dimension (equally spaced). Min and max of data are not included! -> 1 mark is in middle
      * of data range, 2 marks divide the range into 3 thirds, etc...
      */
-    fun getEquidistantMarksWithoutMinMax(data: Array<DoubleArray>, marksPerDimension: IntArray): Array<DoubleArray> {
+    fun getEquidistantMarksWithoutMinMax(data: Array<DoubleArray>, marksPerDimension: IntArray): Marks {
         val min = getMin(data)
         val max = getMax(data)
-        return Array(min.size) { i ->
+        return Marks(Array(min.size) { i ->
             require(marksPerDimension[i] > 0) { "Need to request at least 1 mark per dimension! (Faulty dimension: $i)" }
             val range = max[i] - min[i]
             val spacing = range / (marksPerDimension[i] + 1)
             DoubleArray(marksPerDimension[i]) {
                 min[i] + (it + 1) * spacing
             }
-        }
+        })
     }
 
     /**
@@ -133,10 +132,10 @@ object MarksGenerator {
      * quickSelect would probably have better performance, but needs custom implementation
      *
      */
-    fun getEquallyPopulatedMarks(data: Array<DoubleArray>, marksPerDimension: IntArray): Array<DoubleArray> {
+    fun getEquallyPopulatedMarks(data: Array<DoubleArray>, marksPerDimension: IntArray): Marks {
         // can we do a transpose of the data so that we have an array of components for each dimension that
         // we can sort? Easiest is probably to copy, but this isn't gonna be cheap on ram...
-        return Array(marksPerDimension.size) { dim ->
+        return Marks(Array(marksPerDimension.size) { dim ->
             val n = marksPerDimension[dim]
             val vecsPerRegion = (data.size / (n - 1)) // check effects of constant rounding down... probably last region gets more on avg
             require(vecsPerRegion > 0) {"More regions than data! Better use equidistant marks!"}
@@ -153,7 +152,7 @@ object MarksGenerator {
                     }
                 }
             }
-        }
+        })
     }
 
     /**

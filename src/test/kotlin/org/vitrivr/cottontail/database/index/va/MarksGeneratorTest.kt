@@ -1,9 +1,10 @@
-package org.vitrivr.cottontail.database.index.vaplus
+package org.vitrivr.cottontail.database.index.va
 
 import org.junit.jupiter.api.Test
 
 import org.junit.jupiter.api.Assertions.*
-import org.vitrivr.cottontail.model.values.DoubleVectorValue
+import org.vitrivr.cottontail.database.index.va.marks.MarksGenerator
+import org.vitrivr.cottontail.database.index.va.vaplus.VAPlus
 
 internal class MarksGeneratorTest {
 
@@ -19,7 +20,7 @@ internal class MarksGeneratorTest {
         realdata.forEach { println(it.joinToString()) }
         println("marks")
         val marks = MarksGenerator.getEquidistantMarks(realdata, IntArray(realdata.first().size) { marksPerDim })
-        for (m in marks) {
+        for (m in marks.marks) {
             assertTrue(m.toList() == m.toList().sorted(), "Marks not sorted in ascending order!")
             println(m.joinToString())
         }
@@ -31,7 +32,7 @@ internal class MarksGeneratorTest {
         realdata.forEach { println(it.joinToString()) }
         println("marks (each dim a row)")
         val marks = MarksGenerator.getNonUniformMarks(realdata, IntArray(realdata.first().size) { marksPerDim })
-        marks.forEach { m ->
+        marks.marks.forEach { m ->
             assertTrue(m.toList() == m.toList().sorted(), "Marks not sorted in ascending order!")
             println(m.joinToString()) }
     }
@@ -45,7 +46,7 @@ internal class MarksGeneratorTest {
         val vap = VAPlus()
         println("cells for vecs")
         val cells = realdata.map {
-            val c = vap.getCells(it, marks)
+            val c = marks.getCells(it)
             println(c.joinToString())
             c
         }
@@ -57,7 +58,7 @@ internal class MarksGeneratorTest {
             println(map.joinToString())
             assertTrue(map.max()!! - map.min()!! <= 1, "Dim $dim Difference between most and least per cell larger than 1! Not optimal!")
         }
-        marks.forEachIndexed { i, m ->
+        marks.marks.forEachIndexed { i, m ->
             assertTrue(m.toList() == m.toList().sorted(), "Marks not sorted in ascending order!")
             println(m.joinToString())
 

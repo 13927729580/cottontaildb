@@ -1,4 +1,4 @@
-package org.vitrivr.cottontail.database.index.vaplus
+package org.vitrivr.cottontail.database.index.va.vaplus
 
 import org.apache.commons.math3.linear.MatrixUtils
 import org.mapdb.Atomic
@@ -10,6 +10,9 @@ import org.vitrivr.cottontail.database.entity.Entity
 import org.vitrivr.cottontail.database.events.DataChangeEvent
 import org.vitrivr.cottontail.database.index.Index
 import org.vitrivr.cottontail.database.index.IndexType
+import org.vitrivr.cottontail.database.index.va.SignatureGenerator
+import org.vitrivr.cottontail.database.index.va.VectorApproximationSignature
+import org.vitrivr.cottontail.database.index.va.VAPlusSignatureSerializer
 import org.vitrivr.cottontail.database.queries.components.KnnPredicate
 import org.vitrivr.cottontail.database.queries.components.Predicate
 import org.vitrivr.cottontail.database.queries.planning.cost.Cost
@@ -230,10 +233,10 @@ class VAPlusIndex(override val name: Name.IndexName, override val parent: Entity
             val dataMatrix = MatrixUtils.createRealMatrix(arrayOf(doubleArray))
             val vector = kltMatrixBar.multiply(dataMatrix.transpose()).getColumnVector(0).toArray()
             //val signature = signatureGenerator.toSignature(vaPlus.getCells(vector, marks))
-            val signature = vaPlus.getCells(vector, marks)
-            this.signatures.add(VAPlusSignature(it.tupleId, signature))
+            val signature = marks.getCells(vector)
+            this.signatures.add(VectorApproximationSignature(it.tupleId, signature))
         }
-        val meta = VAPlusMeta(marks, signatureGenerator, kltMatrix)
+        val meta = VAPlusMeta(marks.marks, signatureGenerator, kltMatrix)
         this.meta.set(meta)
         this.db.commit()
     }
