@@ -1,7 +1,8 @@
-package org.vitrivr.cottontail.database.index.lsh.superbit
+package org.vitrivr.cottontail.testutils
 
 import com.github.doyaaaaaken.kotlincsv.dsl.csvReader
 import com.github.doyaaaaaken.kotlincsv.dsl.csvWriter
+import org.vitrivr.cottontail.database.index.lsh.superbit.SuperBitTest
 import org.vitrivr.cottontail.model.values.Complex64Value
 import org.vitrivr.cottontail.model.values.Complex64VectorValue
 import org.vitrivr.cottontail.model.values.DoubleVectorValue

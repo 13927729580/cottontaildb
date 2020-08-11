@@ -9,6 +9,10 @@ import org.vitrivr.cottontail.math.knn.metrics.RealInnerProductDistance
 import org.vitrivr.cottontail.model.values.Complex64VectorValue
 import org.vitrivr.cottontail.model.values.DoubleVectorValue
 import org.vitrivr.cottontail.model.values.types.VectorValue
+import org.vitrivr.cottontail.testutils.getComplexVectorsFromFile
+import org.vitrivr.cottontail.testutils.getRandomComplexVectors
+import org.vitrivr.cottontail.testutils.getRandomRealVectors
+import org.vitrivr.cottontail.testutils.sampleVectorsFromCsv
 import java.io.File
 import java.util.*
 import kotlin.time.ExperimentalTime

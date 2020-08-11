@@ -11,6 +11,9 @@ import org.vitrivr.cottontail.model.values.Complex64VectorValue
 import org.vitrivr.cottontail.model.values.DoubleVectorValue
 import org.vitrivr.cottontail.model.values.types.ComplexVectorValue
 import org.vitrivr.cottontail.model.values.types.VectorValue
+import org.vitrivr.cottontail.testutils.getComplexVectorsFromFile
+import org.vitrivr.cottontail.testutils.getRandomComplexVectors
+import org.vitrivr.cottontail.testutils.getRandomRealVectors
 import java.io.File
 import java.util.*
 
