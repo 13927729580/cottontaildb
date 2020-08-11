@@ -3,20 +3,18 @@ package org.vitrivr.cottontail.database.index.vaplus
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
+import kotlin.math.roundToInt
 
 object MarksGenerator {
     /** */
-    const val EPSILON = 10E-9
+    const val EPSILON = 1E-9
 
     /**
      * Get marks.
+     * Todo: Tests indicate that these marks are less tight than the equidistant ones
      */
     fun getNonUniformMarks(data: Array<DoubleArray>, marksPerDimension: IntArray): Array<DoubleArray> {
-        val marks = getEquidistantMarks(data, marksPerDimension).map {
-            val copy = it.copyOf(it.size + 1)
-            copy[copy.size - 1] = copy[copy.size - 2] + EPSILON
-            copy
-        }.toTypedArray()
+        val marks = getEquidistantMarks(data, marksPerDimension)
 
         /**
          * Iterate over dimensions.
@@ -87,6 +85,7 @@ object MarksGenerator {
                     tmp
                 }
             } while ((delta - deltaBar) / delta < 0.999)
+            marks[d].sort()
         }
         return marks
     }
@@ -94,6 +93,7 @@ object MarksGenerator {
     /**
      * Create marks per dimension (equally spaced). Min and Max of data are included -> only makes sense to require
      * at least 3 marks
+     * note: blott & weber are referring to marks that yield equally populated regions, not equidistant marks
      */
     fun getEquidistantMarks(data: Array<DoubleArray>, marksPerDimension: IntArray): Array<DoubleArray> {
         val min = getMin(data)
@@ -104,8 +104,8 @@ object MarksGenerator {
                 min[i] + it * (max[i] - min[i]) / (marksPerDimension[i] - 1)
             }// subtract small amount to ensure min is included to avoid problems with FP approximations
             // also add small amount for last
-            a[0] -= 1e-9
-            a[a.lastIndex] += 1e-9
+            a[0] -= EPSILON
+            a[a.lastIndex] += EPSILON
             a
         }
     }
@@ -123,6 +123,35 @@ object MarksGenerator {
             val spacing = range / (marksPerDimension[i] + 1)
             DoubleArray(marksPerDimension[i]) {
                 min[i] + (it + 1) * spacing
+            }
+        }
+    }
+
+    /**
+     * pseudocode: we have k = N / (marksPerDimension[d] - 1) elements per region for dimension d
+     * easiest is to just sort each dimension and take kth and k+1th value and put mark in between
+     * quickSelect would probably have better performance, but needs custom implementation
+     *
+     */
+    fun getEquallyPopulatedMarks(data: Array<DoubleArray>, marksPerDimension: IntArray): Array<DoubleArray> {
+        // can we do a transpose of the data so that we have an array of components for each dimension that
+        // we can sort? Easiest is probably to copy, but this isn't gonna be cheap on ram...
+        return Array(marksPerDimension.size) { dim ->
+            val n = marksPerDimension[dim]
+            val vecsPerRegion = (data.size / (n - 1)) // check effects of constant rounding down... probably last region gets more on avg
+            require(vecsPerRegion > 0) {"More regions than data! Better use equidistant marks!"}
+            val dimData = DoubleArray(data.size) { data[it][dim] }
+            dimData.sort()
+            val firstMark = dimData.first() - EPSILON
+            val lastMark = dimData.last() + EPSILON
+            DoubleArray(n) { m ->
+                when (m) {
+                    0 -> firstMark
+                    marksPerDimension[dim] - 1 -> lastMark
+                    else -> {
+                        dimData[m * vecsPerRegion] + (dimData[m * vecsPerRegion + 1] - dimData[m * vecsPerRegion]) / 2
+                    }
+                }
             }
         }
     }
