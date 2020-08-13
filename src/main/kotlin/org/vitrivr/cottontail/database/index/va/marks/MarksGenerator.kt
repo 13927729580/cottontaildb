@@ -97,6 +97,10 @@ object MarksGenerator {
     fun getEquidistantMarks(data: Array<DoubleArray>, marksPerDimension: IntArray): Marks {
         val min = getMin(data)
         val max = getMax(data)
+        return getEquidistantMarks(min, max, marksPerDimension)
+    }
+
+    fun getEquidistantMarks(min: DoubleArray, max: DoubleArray, marksPerDimension: IntArray): Marks {
         return Marks(Array(min.size) { i ->
             require(marksPerDimension[i] > 2) { "Need to request more than 2 mark per dimension! (Faulty dimension: $i)" }
             val a = DoubleArray(marksPerDimension[i]) {

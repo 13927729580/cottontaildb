@@ -8,6 +8,7 @@ import org.vitrivr.cottontail.database.index.lsh.superbit.NonBucketingSuperBitLS
 import org.vitrivr.cottontail.database.index.lsh.superbit.SuperBitLSHIndex
 import org.vitrivr.cottontail.database.index.lsh.superbit.SuperBitLSHIndexConfig
 import org.vitrivr.cottontail.database.index.lucene.LuceneIndex
+import org.vitrivr.cottontail.database.index.va.VAFIndex
 import org.vitrivr.cottontail.model.basics.ColumnDef
 import org.vitrivr.cottontail.model.basics.Name
 import org.vitrivr.cottontail.model.values.types.VectorValue
@@ -36,6 +37,7 @@ enum class IndexType(val inexact: Boolean) {
         LUCENE -> LuceneIndex(name, entity, columns)
         SUPERBIT_LSH -> SuperBitLSHIndex<VectorValue<*>>(name, entity, columns, null)
         NONBUCKETING_SUPERBIT_LSH -> NonBucketingSuperBitLSHIndex<VectorValue<*>>(name, entity, columns, null)
+        VAF -> VAFIndex(name, entity, columns)
         else -> TODO()
     }
 
@@ -53,6 +55,7 @@ enum class IndexType(val inexact: Boolean) {
         LUCENE -> LuceneIndex(name, entity, columns)
         SUPERBIT_LSH -> SuperBitLSHIndex<VectorValue<*>>(name, entity, columns, SuperBitLSHIndexConfig.fromParamMap(params))
         NONBUCKETING_SUPERBIT_LSH -> NonBucketingSuperBitLSHIndex<VectorValue<*>>(name, entity, columns, NonBucketingSuperBitLSHIndexConfig.fromParamMap(params))
+        VAF -> VAFIndex(name, entity, columns)
         else -> TODO()
     }
 }

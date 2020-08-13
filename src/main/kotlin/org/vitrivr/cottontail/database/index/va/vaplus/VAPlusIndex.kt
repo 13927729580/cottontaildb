@@ -12,7 +12,7 @@ import org.vitrivr.cottontail.database.index.Index
 import org.vitrivr.cottontail.database.index.IndexType
 import org.vitrivr.cottontail.database.index.va.SignatureGenerator
 import org.vitrivr.cottontail.database.index.va.VectorApproximationSignature
-import org.vitrivr.cottontail.database.index.va.VAPlusSignatureSerializer
+import org.vitrivr.cottontail.database.index.va.VectorApproximationSignatureSerializer
 import org.vitrivr.cottontail.database.queries.components.KnnPredicate
 import org.vitrivr.cottontail.database.queries.components.Predicate
 import org.vitrivr.cottontail.database.queries.planning.cost.Cost
@@ -44,13 +44,13 @@ class VAPlusIndex(override val name: Name.IndexName, override val parent: Entity
      * Index-wide constants.
      */
     companion object {
-        const val META_FIELD_NAME = "vaf_meta"
-        const val SIGNATURE_FIELD_NAME = "vaf_signatures"
+        const val META_FIELD_NAME = "vapf_meta"
+        const val SIGNATURE_FIELD_NAME = "vapf_signatures"
         private val LOGGER = LoggerFactory.getLogger(VAPlusIndex::class.java)
     }
 
     /** Path to the [VAPlusIndex] file. */
-    override val path: Path = this.parent.path.resolve("idx_vaf_$name.db")
+    override val path: Path = this.parent.path.resolve("idx_vapf_$name.db")
 
     /** The type of [Index] */
     override val type: IndexType = IndexType.VAF
@@ -67,7 +67,7 @@ class VAPlusIndex(override val name: Name.IndexName, override val parent: Entity
 
     /** Map structure used for [VAPlusIndex]. */
     private val meta: Atomic.Var<VAPlusMeta> = this.db.atomicVar(META_FIELD_NAME, VAPlusMetaSerializer).createOrOpen()
-    private val signatures = this.db.indexTreeList(SIGNATURE_FIELD_NAME, VAPlusSignatureSerializer).createOrOpen()
+    private val signatures = this.db.indexTreeList(SIGNATURE_FIELD_NAME, VectorApproximationSignatureSerializer).createOrOpen()
 
     /**
      * Flag indicating if this [VAPlusIndex] has been closed.

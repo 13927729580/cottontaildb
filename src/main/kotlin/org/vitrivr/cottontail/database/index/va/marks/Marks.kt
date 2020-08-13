@@ -1,5 +1,10 @@
 package org.vitrivr.cottontail.database.index.va.marks
 
+import org.mapdb.DataInput2
+import org.mapdb.DataOutput2
+import org.mapdb.Serializer
+import org.mapdb.serializer.SerializerDoubleArray
+
 inline class Marks(val marks: Array<DoubleArray>) {
 
     /**
@@ -20,5 +25,43 @@ inline class Marks(val marks: Array<DoubleArray>) {
         } else {
             index - 1
         }
+    }
+
+    object MarksSerializer: Serializer<Marks> {
+        /**
+         * Serializes the content of the given value into the given
+         * [DataOutput2].
+         *
+         * @param out DataOutput2 to save object into
+         * @param value Object to serialize
+         *
+         * @throws IOException in case of an I/O error
+         */
+        override fun serialize(out: DataOutput2, value: Marks) {
+            out.packInt(value.marks.size)
+            value.marks.forEach { dim ->
+                out.packInt(dim.size)
+                dim.forEach { marksInDim ->
+                    out.writeDouble(marksInDim)
+                }
+            }
+        }
+
+        /**
+         * Deserializes and returns the content of the given [DataInput2].
+         *
+         * @param input DataInput2 to de-serialize data from
+         * @param available how many bytes that are available in the DataInput2 for
+         * reading, may be -1 (in streams) or 0 (null).
+         *
+         * @return the de-serialized content of the given [DataInput2]
+         * @throws IOException in case of an I/O error
+         */
+        override fun deserialize(input: DataInput2, available: Int) = Marks(
+            Array(input.unpackInt()) {
+                DoubleArray(input.unpackInt()) {
+                    input.readDouble()
+                }
+            })
     }
 }
