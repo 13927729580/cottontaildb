@@ -68,6 +68,12 @@ fun lowerBoundComponentProductsSum(cellsVec: IntArray, query: DoubleArray, marks
     }.sum()
 }
 
+private fun lowerBoundComponentProductsSum(cellsVec: IntArray, componentProducts: QueryMarkProducts): Double {
+    return cellsVec.mapIndexed { i, cv ->
+        min(componentProducts.value[i][cv], componentProducts.value[i][cv + 1])
+    }.sum()
+}
+
 /*
 Takes cells (approximation from a real DB vector) and another real Vector (query) and builds the upper-bound of the
 sum of element-by-element products (i.e. it returns an upper bound on the real dot product).
@@ -81,6 +87,33 @@ fun upperBoundComponentProductsSum(cellsVec: IntArray, query: DoubleArray, marks
             marks.marks[i][cv + 1] * query[i]
         }
     }.sum()
+}
+
+private fun upperBoundComponentProductsSum(cellsVec: IntArray, componentProducts: QueryMarkProducts): Double {
+    return cellsVec.mapIndexed { i, cv ->
+        max(componentProducts.value[i][cv], componentProducts.value[i][cv + 1])
+    }.sum()
+}
+
+/**
+ * is private to remove notnull checks in func...
+ */
+private fun lowerUpperBoundComponentProductsSum(cellsVec: IntArray, componentProducts: QueryMarkProducts, outArray: DoubleArray) {
+    var a = 0.0
+    var b = 0.0
+    cellsVec.forEachIndexed { i, cv ->
+        val c = componentProducts.value[i][cv]
+        val d = componentProducts.value[i][cv + 1]
+        if (c < d) {
+            a += c
+            b += d
+        } else {
+            a += d
+            b += c
+        }
+    }
+    outArray[0] = a
+    outArray[1] = b
 }
 
 fun realDotProductBounds(cellsVec: IntArray, query: DoubleArray, marks: Marks): Pair<Double, Double> =
@@ -129,4 +162,45 @@ fun absoluteComplexInnerProductSqUpperBound(cellsVecReal: IntArray, cellsVecImag
     val ubDPReal = ubComplexInnerProductReal(cellsVecReal, queryReal, cellsVecImag, queryImag, marksReal, marksImag)
     val ubDPImag = ubComplexInnerProductImag(cellsVecImag, queryReal, cellsVecReal, queryImag, marksReal, marksImag)
     return ubAbsoluteComplexInnerProductSq(lbDPReal, ubDPReal, lbDPImag, ubDPImag)
+}
+fun absoluteComplexInnerProductSqUpperBoundInlined(cellsVecReal: IntArray, cellsVecImag: IntArray, queryReal: DoubleArray, queryImag: DoubleArray, marksReal: Marks, marksImag: Marks): Double {
+    val lbIPReal = lowerBoundComponentProductsSum(cellsVecReal, queryReal, marksReal) + lowerBoundComponentProductsSum(cellsVecImag, queryImag, marksImag)
+    val lbIPImag = lowerBoundComponentProductsSum(cellsVecImag, queryReal, marksImag) - upperBoundComponentProductsSum(cellsVecReal, queryImag, marksReal)
+    val ubIPReal = upperBoundComponentProductsSum(cellsVecReal, queryReal, marksReal) + upperBoundComponentProductsSum(cellsVecImag, queryImag, marksImag)
+    val ubIPImag = upperBoundComponentProductsSum(cellsVecImag, queryReal, marksImag) - lowerBoundComponentProductsSum(cellsVecReal, queryImag, marksReal)
+    return max(lbIPReal.pow(2), ubIPReal.pow(2)) + max(lbIPImag.pow(2), ubIPImag.pow(2))
+}
+
+fun absoluteComplexInnerProductSqUpperBoundCached(cellsVecReal: IntArray,
+                                                  cellsVecImag: IntArray,
+                                                  queryMarkProductsRealReal: QueryMarkProducts,
+                                                  queryMarkProductsImagImag: QueryMarkProducts,
+                                                  queryMarkProductsRealImag: QueryMarkProducts,
+                                                  queryMarkProductsImagReal: QueryMarkProducts): Double {
+    val lbIPReal = lowerBoundComponentProductsSum(cellsVecReal, queryMarkProductsRealReal) + lowerBoundComponentProductsSum(cellsVecImag, queryMarkProductsImagImag)
+    val lbIPImag = lowerBoundComponentProductsSum(cellsVecImag, queryMarkProductsRealImag) - upperBoundComponentProductsSum(cellsVecReal, queryMarkProductsImagReal)
+    val ubIPReal = upperBoundComponentProductsSum(cellsVecReal, queryMarkProductsRealReal) + upperBoundComponentProductsSum(cellsVecImag, queryMarkProductsImagImag)
+    val ubIPImag = upperBoundComponentProductsSum(cellsVecImag, queryMarkProductsRealImag) - lowerBoundComponentProductsSum(cellsVecReal, queryMarkProductsImagReal)
+    return max(lbIPReal.pow(2), ubIPReal.pow(2)) + max(lbIPImag.pow(2), ubIPImag.pow(2))
+}
+
+/**
+ * consider putting this into a class where it's called and make private
+ * to avoid Intrinsics.checkParameterNotNull calls...
+ */
+fun absoluteComplexInnerProductSqUpperBoundCached2(cellsVecReal: IntArray,
+                                                  cellsVecImag: IntArray,
+                                                  queryMarkProductsRealReal: QueryMarkProducts,
+                                                  queryMarkProductsImagImag: QueryMarkProducts,
+                                                  queryMarkProductsRealImag: QueryMarkProducts,
+                                                  queryMarkProductsImagReal: QueryMarkProducts): Double {
+    val realRealRealBounds = DoubleArray(2)
+    lowerUpperBoundComponentProductsSum(cellsVecReal, queryMarkProductsRealReal, realRealRealBounds)
+    val imagImagImagBounds = DoubleArray(2)
+    lowerUpperBoundComponentProductsSum(cellsVecImag, queryMarkProductsImagImag, imagImagImagBounds)
+    val imagRealImagBounds = DoubleArray(2)
+    lowerUpperBoundComponentProductsSum(cellsVecImag, queryMarkProductsRealImag, imagRealImagBounds)
+    val realImagRealBounds = DoubleArray(2)
+    lowerUpperBoundComponentProductsSum(cellsVecReal, queryMarkProductsImagReal, realImagRealBounds)
+    return max((realRealRealBounds[0] + imagImagImagBounds[0]).pow(2), (realRealRealBounds[1] + imagImagImagBounds[1]).pow(2)) + max((imagRealImagBounds[0] - realImagRealBounds[1]).pow(2), (imagRealImagBounds[1] - realImagRealBounds[0]).pow(2))
 }

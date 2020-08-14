@@ -37,7 +37,7 @@ class VAFIndex(override val name: Name.IndexName, override val parent: Entity, o
         val SIGNATURE_FIELD_NAME = "vaf_signatures"
         val REAL_MARKS_FIELD_NAME = "vaf_marks_real"
         val IMAG_MARKS_FIELD_NAME = "vaf_marks_imag"
-        val MARKS_PER_DIM = 25  // doesn't have too much of an influence on execution time with current implementation -> something is quite inefficient... Influence on filter ratio is visible
+        val MARKS_PER_DIM = 10  // doesn't have too much of an influence on execution time with current implementation -> something is quite inefficient... Influence on filter ratio is visible
         // considering the fact that the approximation is calculated for all query-db pairs, this suggests that the exact calculation is much more efficient
         val LOGGER: Logger = LoggerFactory.getLogger(VAFIndex::class.java)
     }
@@ -60,8 +60,14 @@ class VAFIndex(override val name: Name.IndexName, override val parent: Entity, o
     private val marksRealStore: Atomic.Var<Marks> = db.atomicVar(REAL_MARKS_FIELD_NAME, Marks.MarksSerializer).createOrOpen()
     private val marksImagStore: Atomic.Var<Marks> = db.atomicVar(IMAG_MARKS_FIELD_NAME, Marks.MarksSerializer).createOrOpen()
 
+    private var marksReal: Marks
+    private var marksImag: Marks
+
     /** Store for the signatures. */
     private val signatures = this.db.indexTreeList(SIGNATURE_FIELD_NAME, VectorApproximationSignatureSerializer).createOrOpen()
+
+    private lateinit var signaturesReal: Array<VectorApproximationSignature>
+    private lateinit var signaturesImag: Array<VectorApproximationSignature>
 
     init {
         if (columns.size != 1) {
@@ -70,6 +76,26 @@ class VAFIndex(override val name: Name.IndexName, override val parent: Entity, o
         if (!columns.all { it.type == ColumnType.forName("COMPLEX32_VEC") || it.type == ColumnType.forName("COMPLEX64_VEC") }) {
             throw DatabaseException.IndexNotSupportedException(name, "${this::class.java} currently only supports indexing complex vector columns, not ${columns.first()::class.java}")
         }
+        LOGGER.debug("Loading marks")
+        marksReal = marksRealStore.get() ?: Marks(Array(1) { DoubleArray(1) { 0.0 } }) // todo: make clean...
+        marksImag = marksImagStore.get() ?: Marks(Array(1) { DoubleArray(1) { 0.0 } })
+        LOGGER.debug("Loading all signatures")
+        updateSignaturesFromStore()
+        LOGGER.debug("Done")
+    }
+
+    private fun updateSignaturesFromStore() {
+        val signaturesReal = mutableListOf<VectorApproximationSignature>()
+        val signaturesImag = mutableListOf<VectorApproximationSignature>()
+        signatures.forEachIndexed { index, vectorApproximationSignature ->
+            if (index % 2 == 0) {
+                signaturesReal.add(vectorApproximationSignature!!)
+            } else {
+                signaturesImag.add(vectorApproximationSignature!!)
+            }
+        }
+        this.signaturesReal = signaturesReal.toTypedArray()
+        this.signaturesImag = signaturesImag.toTypedArray()
     }
 
     /**
@@ -137,8 +163,10 @@ class VAFIndex(override val name: Name.IndexName, override val parent: Entity, o
         }
         val marksReal = MarksGenerator.getEquidistantMarks(minReal, maxReal, IntArray(specimen.logicalSize) { MARKS_PER_DIM })
         marksRealStore.set(marksReal)
+        this.marksReal = marksReal
         val marksImag = MarksGenerator.getEquidistantMarks(minImag, maxImag, IntArray(specimen.logicalSize) { MARKS_PER_DIM })
         marksImagStore.set(marksImag)
+        this.marksImag = marksImag
 
         LOGGER.debug("Generating signatures for vectors")
         tx.forEach {
@@ -147,8 +175,9 @@ class VAFIndex(override val name: Name.IndexName, override val parent: Entity, o
             signatures.add(VectorApproximationSignature(it.tupleId, marksReal.getCells(valueReal.toDoubleArray())))
             signatures.add(VectorApproximationSignature(it.tupleId, marksImag.getCells(valueImag.toDoubleArray())))
         }
-        LOGGER.info("Done.")
         db.commit()
+        updateSignaturesFromStore()
+        LOGGER.info("Done.")
     }
 
     /**
@@ -181,8 +210,6 @@ class VAFIndex(override val name: Name.IndexName, override val parent: Entity, o
         require(canProcess(predicate)) { "The supplied predicate $predicate is not supported by the index" }
         LOGGER.info("filtering")
         predicate as KnnPredicate<*>
-        val marksReal = marksRealStore.get()!!
-        val marksImag = marksImagStore.get()!!
         val knns = predicate.query.map {
             if (predicate.k == 1) MinSingleSelection<ComparablePair<Long, DoubleValue>>() else MinHeapSelection<ComparablePair<Long, DoubleValue>>(predicate.k)
         }
@@ -195,14 +222,26 @@ class VAFIndex(override val name: Name.IndexName, override val parent: Entity, o
                 (predicate.query[i] as ComplexVectorValue<*>).imaginary(j).value.toDouble()
             }
         }
+        LOGGER.debug("Precomputing all products of queries and marks")
+        /* each query gets a 4-array with product of query and marks for real-real, imag-imag, real-imag, imag-real
+           (query componentpart - marks)
+         */
+        val queriesMarksProducts = Array(queriesSplit.size) {i ->
+            arrayOf(
+                QueryMarkProducts(queriesSplit[i].first, marksReal),
+                QueryMarkProducts(queriesSplit[i].second, marksImag),
+                QueryMarkProducts(queriesSplit[i].first, marksImag),
+                QueryMarkProducts(queriesSplit[i].second, marksReal)
+            )
+        }
+        LOGGER.debug("Done")
         var countCandidates = 0
         var countRejected = 0
-        signatures.chunked(2).forEach {sigRealImag ->
-            val sigReal = sigRealImag[0]!!
-            val sigImag = sigRealImag[1]!!
-            check(sigReal.tupleId == sigImag.tupleId)
+        (signaturesReal.indices).forEach {
+            val sigReal = signaturesReal[it]
+            val sigImag = signaturesImag[it]
             predicate.query.forEachIndexed { i, query ->
-                val absIPDistLB = 1.0 - absoluteComplexInnerProductSqUpperBound(sigReal.signature, sigImag.signature, queriesSplit[i].first, queriesSplit[i].second, marksReal, marksImag).pow(0.5)
+                val absIPDistLB = 1.0 - absoluteComplexInnerProductSqUpperBoundCached2(sigReal.signature, sigImag.signature, queriesMarksProducts[i][0], queriesMarksProducts[i][1], queriesMarksProducts[i][2], queriesMarksProducts[i][3]).pow(0.5)
                 if (knns[i].size < predicate.k || knns[i].peek()!!.second > absIPDistLB) {
                     countCandidates++
                     val tid = sigReal.tupleId
