@@ -3,8 +3,11 @@ package org.vitrivr.cottontail.database.index.va
 import org.junit.jupiter.api.Test
 
 import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 import org.vitrivr.cottontail.database.index.va.marks.Marks
 import org.vitrivr.cottontail.database.index.va.marks.MarksGenerator
+import org.vitrivr.cottontail.math.knn.metrics.AbsoluteInnerProductDistance
 import org.vitrivr.cottontail.model.values.Complex64Value
 import org.vitrivr.cottontail.model.values.Complex64VectorValue
 import org.vitrivr.cottontail.model.values.DoubleVectorValue
@@ -13,6 +16,9 @@ import java.util.*
 import kotlin.math.pow
 import kotlin.reflect.full.createType
 import kotlin.reflect.full.declaredMemberProperties
+import kotlin.time.Duration
+import kotlin.time.ExperimentalTime
+import kotlin.time.measureTime
 
 internal class VAFunctionsKtTest {
     val random = Random(1234)
@@ -200,6 +206,46 @@ internal class VAFunctionsKtTest {
                 println("min: $min, avg: $avg, max: $max")
             }
         }
+    }
+
+    @ExperimentalTime
+    @ParameterizedTest
+    @ValueSource(ints = [5, 10, 20, 50])
+    fun boundsSpeedFromFile(mpd: Int) {
+        val data = getComplexVectorsFromFile("src/test/resources/sampledVectors.csv/")
+        val dataReal = data.map { vec -> vec.map { it.real.value }.toDoubleArray() }.toTypedArray()
+        val dataImag = data.map { vec -> vec.map { it.imaginary.value }.toDoubleArray() }.toTypedArray()
+        val marksReal = MarksGenerator.getEquidistantMarks(dataReal, IntArray(20) { mpd })
+        val marksImag = MarksGenerator.getEquidistantMarks(dataImag, IntArray(20) { mpd })
+        val cellsVecsReal = dataReal.map { marksReal.getCells(it) }.toTypedArray()
+        val cellsVecsImag = dataImag.map { marksImag.getCells(it) }.toTypedArray()
+
+        var timeExact = Duration.ZERO
+        var timeUpper = Duration.ZERO
+        var count = 0
+        (data.indices).forEach { i ->
+            (0  until data.size).forEach { j ->
+                val query = data[j]
+                val queryReal = dataReal[j]
+                val queryImag = dataImag[j]
+                timeExact += measureTime { AbsoluteInnerProductDistance(data[i], query) }
+                val queryMarksProductRealReal = QueryMarkProducts(queryReal, marksReal)
+                val queryMarksProductImagImag = QueryMarkProducts(queryImag, marksImag)
+                val queryMarksProductRealImag = QueryMarkProducts(queryReal, marksImag)
+                val queryMarksProductImagReal = QueryMarkProducts(queryImag, marksReal)
+                timeUpper += measureTime {
+                    absoluteComplexInnerProductSqUpperBoundCached2Public(cellsVecsReal[i],
+                    cellsVecsImag[j],
+                    queryMarksProductRealReal,
+                    queryMarksProductImagImag,
+                    queryMarksProductRealImag,
+                    queryMarksProductImagReal)
+                }
+                count++
+            }
+        }
+        println("marksPerDim $mpd: avg time exact ${timeExact.inMilliseconds / count} ms")
+        println("marksPerDim $mpd: avg time upper ${timeUpper.inMilliseconds / count} ms")
     }
 
 }
