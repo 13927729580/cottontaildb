@@ -163,4 +163,17 @@ class PQ(val codebooks: Array<PQCodebook>) {
         }
         )
     }
+
+    fun precomputeCentroidQueryIPFloat(q: DoubleArray): PQCentroidQueryIPFloat {
+        return PQCentroidQueryIPFloat(Array(numSubspaces) { k ->
+            FloatArray(numCentroids) { i ->
+                var ip = 0.0F
+                for (j in 0 until dimensionsPerSubspace) {
+                    ip += (q[k * dimensionsPerSubspace + j] * codebooks[k].centroids[i][j]).toFloat()
+                }
+                ip
+            }
+        }
+        )
+    }
 }

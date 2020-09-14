@@ -3,7 +3,7 @@ package org.vitrivr.cottontail.database.index.pq
 import org.mapdb.DataInput2
 import org.mapdb.DataOutput2
 
-data class PQIndexConfig (val numSubspaces: Int, val numCentroids: Int, /*val learningDataFraction: Double,*/ val seed: Long) {
+data class PQIndexConfig (val numSubspaces: Int, val numCentroids: Int, val learningDataFraction: Double, val lookuptablePrecision: LookupTablePrecision, val kApproxScan: Int, val seed: Long) {
     companion object Serializer: org.mapdb.Serializer<PQIndexConfig> {
         /**
          * Serializes the content of the given value into the given
@@ -17,7 +17,9 @@ data class PQIndexConfig (val numSubspaces: Int, val numCentroids: Int, /*val le
         override fun serialize(out: DataOutput2, value: PQIndexConfig) {
             out.packInt(value.numSubspaces)
             out.packInt(value.numCentroids)
-//            out.writeDouble(value.learningDataFraction)
+            out.writeDouble(value.learningDataFraction)
+            out.packInt(value.lookuptablePrecision.ordinal)
+            out.packInt(value.kApproxScan)
             out.packLong(value.seed)
         }
 
@@ -32,13 +34,15 @@ data class PQIndexConfig (val numSubspaces: Int, val numCentroids: Int, /*val le
          * @throws IOException in case of an I/O error
          */
         override fun deserialize(input: DataInput2, available: Int)
-            = PQIndexConfig(input.unpackInt(), input.unpackInt(), /*input.readDouble(),*/ input.unpackLong())
+            = PQIndexConfig(input.unpackInt(), input.unpackInt(), input.readDouble(), LookupTablePrecision.values()[input.unpackInt()], input.unpackInt(), input.unpackLong())
 
         fun fromParamsMap(params: Map<String, String>) =
                 PQIndexConfig(
                         numSubspaces = (params[PQIndexConfigParamMapKeys.NUM_SUBSPACES.key] ?: error("num_subspaces not found")).toInt(),
                         numCentroids = (params[PQIndexConfigParamMapKeys.NUM_CENTROIDS.key] ?: error("num_centroids not found")).toInt(),
-//                        learningDataFraction = (params[PQIndexConfigParamMapKeys.LEARNING_DATA_FRACTION.key] ?: error("learning_data_fraction not found")).toDouble(),
+                        learningDataFraction = (params[PQIndexConfigParamMapKeys.LEARNING_DATA_FRACTION.key] ?: error("learning_data_fraction not found")).toDouble(),
+                        lookuptablePrecision = LookupTablePrecision.valueOf(params[PQIndexConfigParamMapKeys.LOOKUPTABLE_PRECISION.key] ?: error("lookuptable_precision not found")),
+                        kApproxScan = (params[PQIndexConfigParamMapKeys.K_APPROX_SCAN.key] ?: error("k_approx_scan not found")).toInt(),
                         seed = (params[PQIndexConfigParamMapKeys.SEED.key] ?: error("seed not found")).toLong()
                 )
     }

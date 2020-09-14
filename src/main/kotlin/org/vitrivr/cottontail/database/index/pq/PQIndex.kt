@@ -47,7 +47,6 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
         val PQ_IMAG_NAME = "pq_cb_imag"
         val SIG_REAL_NAME = "pq_sig_real"
         val SIG_IMAG_NAME = "pq_sig_imag"
-        val LEARNING_DATA_FRACTION = 5e-3 //todo: integrate to config. Change to use absolute number and calculate fraction from count of entity (but we need to know count at index build time, not sure if is accessible atm)
         val LOGGER = LoggerFactory.getLogger(PQIndex::class.java)
 
         /**
@@ -123,7 +122,7 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
             this.config = config
         }
         // some assumptions. Some are for documentation, some are cheap enough to actually keep and check
-        require(this.config.numCentroids <= UByte.MAX_VALUE.toInt())
+        require(this.config.numCentroids <= UShort.MAX_VALUE.toInt())
         require(this.config.numSubspaces > 0)
         require(this.config.numCentroids > 0)
         require(columns[0].logicalSize >= this.config.numSubspaces)
@@ -211,7 +210,7 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
         val (permutedLearningDataRealImag, learningTIds) =
                 mutableListOf<Pair<Pair<DoubleArray, DoubleArray>, Long>>().apply {
             tx.forEach { r ->
-                if (rng.nextDouble() > LEARNING_DATA_FRACTION) {
+                if (rng.nextDouble() > config.learningDataFraction) {
                     return@forEach
                 }
                 val reIm = permuteSplitComplexRecord(r)
@@ -308,11 +307,9 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
         require(canProcess(predicate)) {"The supplied predicate $predicate cannot be processed by index ${this.name}"}
         LOGGER.info("${this.name} Filtering")
         val p = predicate as KnnPredicate<*>
-        val pqReal = this.pqReal // avoids uninitialized property check in loop...
-        val pqImag = this.pqImag
 
-        val approxK = 100
-        val knns = scanQueriesSign(p, pqReal, pqImag, k = approxK)
+        val approxK = config.kApproxScan
+        val knns = scanQueriesSign(p, this.pqReal, this.pqImag, k = approxK)
 //        val knns = scanSignQueries(p, pqReal, pqImag)
 
         // get exact distances...
@@ -324,6 +321,8 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
                 val exact = tx.read(tid)[columns[0]]!! as ComplexVectorValue<*>
                 knnNew.offer(ComparablePair(tid, p.distance(exact, p.query[i])))
             }
+            val distDiff = knn.peek()!!.second - knnNew.peek()!!.second.value.toFloat()
+            LOGGER.debug("query $i Distance difference between approximate best match and actual with approxK=$approxK: $distDiff")
             knnNew
         }
         LOGGER.info("Done")
@@ -338,22 +337,22 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
      * compare with parallelized and optimized full-scan of ca 65s
      */
     @ExperimentalUnsignedTypes
-    private fun scanQueriesSign(p: KnnPredicate<*>, pqReal: PQ, pqImag: PQ, k: Int = p.k): List<Selection<ComparablePair<Long, Double>>> {
+    private fun scanQueriesSign(p: KnnPredicate<*>, pqReal: PQ, pqImag: PQ, k: Int = p.k): List<Selection<ComparablePair<Long, Float>>> {
         // how about interleaving the signatures arrays?
         // on 128x1 query, this was about the same speed, despite taking ca 3s to interleave
         // -> might be beneficial for larger queries!
         LOGGER.info("Interleaving signature arrays")
         val sigLength = config.numSubspaces
         // JVM only actually has 1d arrays... -> not contiguous in ram
-        val sigReIm = UByteArray(signaturesImag.size * sigLength * 2) {
+        val sigReIm = UShortArray(signaturesImag.size * sigLength * 2) {
             val i = it / (sigLength * 2)
             val j = it % (sigLength * 2)
-            if (j < sigLength) signaturesReal[i][j].toUByte() else signaturesImag[i][j % sigLength].toUByte()
+            if (j < sigLength) signaturesReal[i][j].toUShort() else signaturesImag[i][j % sigLength].toUShort()
         }
         LOGGER.info("Done.")
         val knnQueries = p.query.mapIndexed { i, q_ ->
             val q = q_ as ComplexVectorValue<*>
-            (if (k == 1) MinSingleSelection<ComparablePair<Long, Double>>() else MinHeapSelection<ComparablePair<Long, Double>>(k)) to q
+            (if (k == 1) MinSingleSelection<ComparablePair<Long, Float>>() else MinHeapSelection<ComparablePair<Long, Float>>(k)) to q
         }
         knnQueries.parallelStream().forEach { (knn, q) ->
 //            LOGGER.info("Processing query ${i + 1} of ${p.query.size}")
@@ -365,10 +364,10 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
                 permutedQueryImag[permutation[j]] = c.imaginary.value.toDouble()
             }
             LOGGER.info("Precomputing IPs between query and centroids")
-            val queryCentroidIPRealReal = pqReal.precomputeCentroidQueryIP(permutedQueryReal)
-            val queryCentroidIPImagImag = pqImag.precomputeCentroidQueryIP(permutedQueryImag)
-            val queryCentroidIPRealImag = pqReal.precomputeCentroidQueryIP(permutedQueryImag)
-            val queryCentroidIPImagReal = pqImag.precomputeCentroidQueryIP(permutedQueryReal)
+            val queryCentroidIPRealReal = pqReal.precomputeCentroidQueryIPFloat(permutedQueryReal)
+            val queryCentroidIPImagImag = pqImag.precomputeCentroidQueryIPFloat(permutedQueryImag)
+            val queryCentroidIPRealImag = pqReal.precomputeCentroidQueryIPFloat(permutedQueryImag)
+            val queryCentroidIPImagReal = pqImag.precomputeCentroidQueryIPFloat(permutedQueryReal)
             LOGGER.info("Scanning signatures")
             signaturesReal.indices.forEach {
                 // todo: check this!!
@@ -389,10 +388,10 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
         return knnQueries.unzip().first
     }
 
-    private fun scanSignQueries(p: KnnPredicate<*>, pqReal: PQ, pqImag: PQ): List<Selection<ComparablePair<Long, Double>>> {
+    private fun scanSignQueries(p: KnnPredicate<*>, pqReal: PQ, pqImag: PQ): List<Selection<ComparablePair<Long, Float>>> {
         val knns = p.query.map {
-            // todo: always look for k > 1 and then merge with exact values after...
-            if (p.k == 1) MinSingleSelection<ComparablePair<Long, Double>>() else MinHeapSelection<ComparablePair<Long, Double>>(p.k)
+            // todo: integrate kApproxScan and then merge with exact values after...
+            if (p.k == 1) MinSingleSelection<ComparablePair<Long, Float>>() else MinHeapSelection<ComparablePair<Long, Float>>(p.k)
         }
 
         LOGGER.info("Permuting queries")
@@ -408,16 +407,16 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
 
         LOGGER.info("Precomputing IPs between queries and centroids")
         val queryCentroidIPRealReal = Array(p.query.size) {
-            pqReal.precomputeCentroidQueryIP(permutedQueryReal[it])
-        }
-        val queryCentroidIPImagImag = Array(p.query.size) {
-            pqImag.precomputeCentroidQueryIP(permutedQueryImag[it])
-        }
-        val queryCentroidIPRealImag = Array(p.query.size) {
-            pqReal.precomputeCentroidQueryIP(permutedQueryImag[it])
+            pqReal.precomputeCentroidQueryIPFloat(permutedQueryReal[it])
         }
         val queryCentroidIPImagReal = Array(p.query.size) {
-            pqImag.precomputeCentroidQueryIP(permutedQueryReal[it])
+            pqImag.precomputeCentroidQueryIPFloat(permutedQueryReal[it])
+        }
+        val queryCentroidIPImagImag = Array(p.query.size) {
+            pqImag.precomputeCentroidQueryIPFloat(permutedQueryImag[it])
+        }
+        val queryCentroidIPRealImag = Array(p.query.size) {
+            pqReal.precomputeCentroidQueryIPFloat(permutedQueryImag[it])
         }
 
         LOGGER.info("Scanning signatures")

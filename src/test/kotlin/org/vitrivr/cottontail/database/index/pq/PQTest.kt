@@ -15,10 +15,6 @@ import kotlin.time.measureTimedValue
 
 internal class PQTest {
 
-    @Test
-    fun getCodebooks() {
-    }
-
     @ExperimentalTime
     @Test
     fun testPQ() {
