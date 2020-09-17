@@ -1,5 +1,6 @@
 package org.vitrivr.cottontail.database.index.pq
 
+import org.apache.commons.math3.linear.MatrixUtils.createRealMatrix
 import org.mapdb.DataInput2
 import org.mapdb.DataOutput2
 import org.slf4j.Logger
@@ -14,6 +15,9 @@ class PQ(val codebooks: Array<PQCodebook>) {
     companion object Serializer : org.mapdb.Serializer<PQ> {
         private val LOGGER: Logger = LoggerFactory.getLogger(PQ::class.java)
         private val doubleArraySerializer = org.mapdb.Serializer.DOUBLE_ARRAY!!
+        fun fromPermutedData(numSubspaces: Int, numCentroids: Int, permutedData: Array<DoubleArray>, permutedExampleQueryData: Array<DoubleArray>): Pair<PQ, Array<IntArray>> {
+            return fromPermutedData(numSubspaces, numCentroids, permutedData)
+        }
 
         fun fromPermutedData(numSubspaces: Int, numCentroids: Int, permutedData: Array<DoubleArray>): Pair<PQ, Array<IntArray>> {
             LOGGER.info("Initializing PQ from initial data.")
@@ -66,6 +70,10 @@ class PQ(val codebooks: Array<PQCodebook>) {
                 it.centroids.forEach { c ->
                     doubleArraySerializer.serialize(out, c)
                 }
+                val cov = it.inverseDataCovarianceMatrix.data // first dim are rows
+                for (i in 0 until value.dimensionsPerSubspace) {
+                    doubleArraySerializer.serialize(out, cov[i])
+                }
             }
         }
 
@@ -87,7 +95,10 @@ class PQ(val codebooks: Array<PQCodebook>) {
                 PQCodebook(Array(numCentroids) {
                     // todo: check if available - pos is actually correct...
                     doubleArraySerializer.deserialize(input, available - input.pos)
-                })
+                },
+                createRealMatrix(Array(dimensionsPerSubspace) {
+                    doubleArraySerializer.deserialize(input, available - input.pos)
+                }))
             })
         }
     }

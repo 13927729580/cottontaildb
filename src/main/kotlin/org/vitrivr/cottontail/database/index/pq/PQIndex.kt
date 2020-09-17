@@ -112,8 +112,9 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
         val cod = configOnDisk.get()
         if (config == null) {
             if (cod == null) {
-                throw StoreException("No config supplied but the config from disk was null!")
-//                this.config = PQIndexConfig(1, 1, 1234L)
+//                throw StoreException("No config supplied but the config from disk was null!")
+                LOGGER.warn("No config supplied, but the config from disk was null!! Using a dummy config. Please consider this index invalid!")
+                this.config = PQIndexConfig(1, 1, 5e-3, LookupTablePrecision.SINGLE, 100, 1234L)
             } else {
                 this.config = cod
             }
