@@ -15,6 +15,10 @@ import kotlin.time.measureTimedValue
 
 internal class PQTest {
 
+    /*
+    todo: test with noisy data
+     */
+
     @ExperimentalTime
     @Test
     fun testPQ() {
@@ -87,62 +91,57 @@ internal class PQTest {
         var MSERealImag = 0.0
         var MSEImagReal = 0.0
         var MSEAbs = 0.0
-        var n = 0
         val vRealData = realData.map {
             DoubleVectorValue(it)
         }
         val vImagData = imagData.map {
             DoubleVectorValue(it)
         }
+        val numPairs = 100000
         print("i = ")
         csvWriter().open(File(outFileDir, "IPs.csv")) {
             writeRow(listOf("i", "j", "exactAbsIP", "exactRealReal", "exactImagImag", "exactImagReal", "exactRealImag", "approxAbsIP", "approxRealReal", "approxImagImag", "approxImagReal", "approxRealImag"))
-            for (i in data.indices) {
-                if (i % 1000 == 0) {
-                    if (i % 10000 == 0) {
-                        println("$i")
+            for (n in 0 until numPairs) {
+                if (n % 1000 == 0) {
+                    if (n % 10000 == 0) {
+                        println("$n")
                     } else {
                         print(".")
                     }
                 }
-                for (j in i until data.size) {
-                    if (j % 10 == 0) {
-                        val exactAbsIP = 1.0 - AbsoluteInnerProductDistance(data[i], data[j]).value
-                        val exactRealReal = vRealData[i].dot(vRealData[j]).value
-                        val exactImagImag = vImagData[i].dot(vImagData[j]).value
-                        val exactImagReal = vImagData[i].dot(vRealData[j]).value
-                        val exactRealImag = vRealData[i].dot(vImagData[j]).value
-                        val approxRealReal = pqReal.first.approximateAsymmetricIP(pqReal.second[i], permutedRealData[j])
-                        val approxImagImag = pqImag.first.approximateAsymmetricIP(pqImag.second[i], permutedImagData[j])
-                        val approxImagReal = pqImag.first.approximateAsymmetricIP(pqImag.second[i], permutedRealData[j])
-                        val approxRealImag = pqReal.first.approximateAsymmetricIP(pqReal.second[i], permutedImagData[j])
-                        val approxAbsIP = ((approxRealReal + approxImagImag).pow(2) + (approxImagReal - approxRealImag).pow(2)).pow(0.5)
-                        if (j % 10000 == 0) {
-                            writeRow(listOf(i, j, exactAbsIP, exactRealReal, exactImagImag, exactImagReal, exactRealImag, approxAbsIP, approxRealReal, approxImagImag, approxImagReal, approxRealImag).map { it.toString() })
-                        }
-                        MSEAbs += (exactAbsIP - approxAbsIP).pow(2)
-                        MSERealReal += (exactRealReal - approxRealReal).pow(2)
-                        MSEImagImag += (exactImagImag - approxImagImag).pow(2)
-                        MSEImagReal += (exactImagReal - approxImagReal).pow(2)
-                        MSERealImag += (exactRealImag - approxRealImag ).pow(2)
-                        n++
-                    }
-                }
+                val i = rng.nextInt(data.size)
+                val j = rng.nextInt(data.size)
+                val exactAbsIP = 1.0 - AbsoluteInnerProductDistance(data[i], data[j]).value
+                val exactRealReal = vRealData[i].dot(vRealData[j]).value
+                val exactImagImag = vImagData[i].dot(vImagData[j]).value
+                val exactImagReal = vImagData[i].dot(vRealData[j]).value
+                val exactRealImag = vRealData[i].dot(vImagData[j]).value
+                val approxRealReal = pqReal.first.approximateAsymmetricIP(pqReal.second[i], permutedRealData[j])
+                val approxImagImag = pqImag.first.approximateAsymmetricIP(pqImag.second[i], permutedImagData[j])
+                val approxImagReal = pqImag.first.approximateAsymmetricIP(pqImag.second[i], permutedRealData[j])
+                val approxRealImag = pqReal.first.approximateAsymmetricIP(pqReal.second[i], permutedImagData[j])
+                val approxAbsIP = ((approxRealReal + approxImagImag).pow(2) + (approxImagReal - approxRealImag).pow(2)).pow(0.5)
+                writeRow(listOf(i, j, exactAbsIP, exactRealReal, exactImagImag, exactImagReal, exactRealImag, approxAbsIP, approxRealReal, approxImagImag, approxImagReal, approxRealImag).map { it.toString() })
+                MSEAbs += (exactAbsIP - approxAbsIP).pow(2)
+                MSERealReal += (exactRealReal - approxRealReal).pow(2)
+                MSEImagImag += (exactImagImag - approxImagImag).pow(2)
+                MSEImagReal += (exactImagReal - approxImagReal).pow(2)
+                MSERealImag += (exactRealImag - approxRealImag ).pow(2)
             }
         }
         println("")
-        MSEAbs /= n
-        MSERealReal /= n
-        MSEImagImag /= n
-        MSEImagReal /= n
-        MSERealImag /= n
-        println("n = $n")
+        MSEAbs /= numPairs
+        MSERealReal /= numPairs
+        MSEImagImag /= numPairs
+        MSEImagReal /= numPairs
+        MSERealImag /= numPairs
+        println("n = $numPairs")
         println("MSEAbs = $MSEAbs")
         println("MSERealReal = $MSERealReal")
         println("MSEImagImag = $MSEImagImag")
         println("MSEImagReal = $MSEImagReal")
         println("MSERealImag = $MSERealImag")
-        File(outFileDir, "MSE.txt").writeText("n: $n\nMSEAsymmetric: $MSEAbs\nMSERealReal: $MSERealReal\nMSEImagImag: $MSEImagImag\nMSEImagReal: $MSEImagReal\nMSERealImag: $MSERealImag")
+        File(outFileDir, "MSE.txt").writeText("n: $numPairs\nMSEAsymmetric: $MSEAbs\nMSERealReal: $MSERealReal\nMSEImagImag: $MSEImagImag\nMSEImagReal: $MSEImagReal\nMSERealImag: $MSERealImag")
         vectorsFile.copyTo(File(outFileDir, vectorsFile.name))
     }
 }
