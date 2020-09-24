@@ -1,6 +1,7 @@
 package org.vitrivr.cottontail.database.index.pq
 
 import org.mapdb.DBMaker
+import org.mapdb.Serializer
 import org.slf4j.LoggerFactory
 import org.vitrivr.cottontail.database.column.ColumnType
 import org.vitrivr.cottontail.database.entity.Entity
@@ -99,8 +100,8 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
     val signaturesReal = mutableListOf<IntArray>()
     val signaturesImag = mutableListOf<IntArray>()
     val signaturesTId = mutableListOf<Long>()
-    val signaturesRealStore = db.indexTreeList(SIG_REAL_NAME, PQSignature.Serializer).createOrOpen() // todo: move to Htreemap which has pump for faster bulk data manipulation?
-    val signaturesImagStore = db.indexTreeList(SIG_IMAG_NAME, PQSignature.Serializer).createOrOpen()
+    val signaturesRealStore = db.hashMap(SIG_REAL_NAME, Serializer.LONG, Serializer.INT_ARRAY).counterEnable().createOrOpen()
+    val signaturesImagStore = db.hashMap(SIG_IMAG_NAME, Serializer.LONG, Serializer.INT_ARRAY).counterEnable().createOrOpen()
 
     init {
         if (columns.size != 1) {
@@ -136,18 +137,36 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
         }
         pqStoreReal.get()?.let { pqReal = it }
         pqStoreImag.get()?.let { pqImag = it }
-        LOGGER.info("Index ${name.simple} loading Signatures")
-        signaturesRealStore.forEach {
-            signaturesReal.add(it!!.signature)
-            signaturesTId.add(it.tid)
-        }
-        signaturesImagStore.forEach { signaturesImag.add(it!!.signature) }
-        LOGGER.info("Done.")
+
         this.db.commit() // this writes config stuff, so that the commit doesn't wait until rebuild()
         // note that due to this (if it works as expected, which is probably not the case),
         // now indexes that are not yet built can exist
         // and there are no indexEntries in the entity that cannot be opened...
         // (e.g if there is a failure during rebuild()...
+        loadSignaturesFromDisk()
+    }
+
+    private fun loadSignaturesFromDisk() {
+        signaturesReal.clear()
+        LOGGER.info("Index ${name.simple} loading Real Signatures from store")
+        val signaturesTIdReal = mutableListOf<Long>()
+        val signaturesTIdImag = mutableListOf<Long>()
+        signaturesRealStore.forEach { tid, signature ->
+            signaturesReal.add(signature!!)
+            signaturesTIdReal.add(tid!!)
+        }
+        LOGGER.info("Done.")
+        signaturesImag.clear()
+        LOGGER.info("Index ${name.simple} loading Imag Signatures from store")
+        signaturesImagStore.forEach { tid, signature ->
+            signaturesImag.add(signature!!)
+            signaturesTIdImag.add(tid!!)
+        }
+        LOGGER.info("Done.")
+        LOGGER.info("Checking if signatures are in same order")
+        check((signaturesTIdReal zip signaturesTIdImag).all { (tidRe, tidIm) -> tidRe == tidIm })
+        signaturesTId.clear()
+        signaturesTId.addAll(signaturesTIdImag)
     }
 
     /**
@@ -199,11 +218,8 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
     override fun rebuild(tx: Entity.Tx) {
         //todo: don't copy data
         LOGGER.info("Rebuilding PQIndex.")
-        signaturesReal.clear()
         signaturesRealStore.clear()
-        signaturesImag.clear()
         signaturesImagStore.clear()
-        signaturesTId.clear()
         LOGGER.info("Permuting data.")
         // because tx doesn't have a simple .filter method where we can specify any old boolean, we need to
         // roll our own...
@@ -227,18 +243,20 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
         with(cbSigReal) {
             pqReal = first
             pqStoreReal.set(pqReal)
-            signaturesReal.addAll(second)
-            signaturesRealStore.addAll(second.mapIndexed { i, sign ->
-                PQSignature(learningTIds[i], sign)
+            LOGGER.info("Adding real sigs to new store")
+            signaturesRealStore.putAll(second.mapIndexed { i, sign ->
+                learningTIds[i] to sign
             })
+            LOGGER.info("Done.")
         }
         with(cbSigImag) {
             pqImag = first
             pqStoreImag.set(pqImag)
-            signaturesImag.addAll(second)
-            signaturesImagStore.addAll(second.mapIndexed { i, sign ->
-                PQSignature(learningTIds[i], sign)
+            LOGGER.info("Adding imag sigs to new store")
+            signaturesImagStore.putAll(second.mapIndexed { i, sign ->
+                learningTIds[i] to sign
             })
+            LOGGER.info("Done.")
         }
         signaturesTId.addAll(learningTIds)
         LOGGER.info("Learning done.")
@@ -253,15 +271,14 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
                 return@forEach
             val reIm = permuteSplitComplexRecord(r)
             val sigReal = pqReal.getSignature(reIm.first)
-            signaturesReal.add(sigReal)
-            signaturesRealStore.add(PQSignature(r.tupleId, sigReal))
+            signaturesRealStore.put(r.tupleId, sigReal)
             val sigImag = pqImag.getSignature(reIm.second)
-            signaturesImag.add(sigImag)
-            signaturesImagStore.add(PQSignature(r.tupleId, sigImag))
-            signaturesTId.add(r.tupleId)
+            signaturesImagStore.put(r.tupleId, sigImag)
         }
         LOGGER.info("Done generating and storing signatures. Committing.")
         db.commit()
+        LOGGER.info("Loading signatures from disk.")
+        loadSignaturesFromDisk()
         LOGGER.info("PQIndex rebuild done.")
     }
 
