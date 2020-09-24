@@ -99,7 +99,7 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
     val signaturesReal = mutableListOf<IntArray>()
     val signaturesImag = mutableListOf<IntArray>()
     val signaturesTId = mutableListOf<Long>()
-    val signaturesRealStore = db.indexTreeList(SIG_REAL_NAME, PQSignature.Serializer).createOrOpen()
+    val signaturesRealStore = db.indexTreeList(SIG_REAL_NAME, PQSignature.Serializer).createOrOpen() // todo: move to Htreemap which has pump for faster bulk data manipulation?
     val signaturesImagStore = db.indexTreeList(SIG_IMAG_NAME, PQSignature.Serializer).createOrOpen()
 
     init {
@@ -371,7 +371,6 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
             val queryCentroidIPImagReal = pqImag.precomputeCentroidQueryIPFloat(permutedQueryReal)
             LOGGER.info("Scanning signatures")
             signaturesReal.indices.forEach {
-                // todo: check this!!
                 val sigOffset = it * sigLength * 2 // offset into sign array. first half of signature is real, other is im
                 val tid = signaturesTId[it]
                 val absIPSqApprox = ((
@@ -382,7 +381,7 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
                                 - queryCentroidIPRealImag.approximateIP(sigReIm, sigOffset, sigLength)
                         ).pow(2)
                         )
-//                if (knn.peek()!!.second > absIPSqApprox) // do we really need to create a new pair every single time?
+//                if (knn.added < knn.k || knn.peek()!!.second > -absIPSqApprox) // do we really need to create a new pair every single time?
                 knn.offer(ComparablePair(tid, -absIPSqApprox))
             }
         }

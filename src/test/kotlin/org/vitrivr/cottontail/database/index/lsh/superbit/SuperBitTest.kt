@@ -63,7 +63,7 @@ internal class SuperBitTest {
         println("N: $N, L: $L")
         val outDir = File("testOut/fromCsv")
         val sb = SuperBit(N, L, 1234, SuperBit.SamplingMethod.GAUSSIAN, Complex64VectorValue.zero(20))
-        val vectors = getComplexVectorsFromFile("src/test/resources/sampledVectors.csv")
+        val vectors = getComplexVectorsFromFile("src/test/resources/sampledVectors.csv", 1, numDim)
         compareNormalizedVectors(vectors as Array<VectorValue<*>>, sb, File(outDir, "complex64SBLSHSignaturesGaussianN${N}L${L}_withoutImag.csv"), false)
     }
 
@@ -73,7 +73,7 @@ internal class SuperBitTest {
         println("N: $N, L: $L")
         val outDir = File("testOut/fromCsv")
         val sb = SuperBit(N, L, 1234, SuperBit.SamplingMethod.GAUSSIAN, Complex64VectorValue.zero(20))
-        val vectors = getComplexVectorsFromFile("src/test/resources/sampledVectors.csv")
+        val vectors = getComplexVectorsFromFile("src/test/resources/sampledVectors.csv", 1, numDim)
         compareNormalizedVectors(vectors as Array<VectorValue<*>>, sb, File(outDir, "complex64SBLSHSignaturesGaussianN${N}L${L}_withImag.csv"), true)
     }
 
@@ -83,7 +83,7 @@ internal class SuperBitTest {
         println("N: $N, L: $L")
         val outDir = File("testOut/fromCsv")
         val sb = SuperBit(N, L, 1234, SuperBit.SamplingMethod.UNIFORM, Complex64VectorValue.zero(20))
-        val vectors = getComplexVectorsFromFile("src/test/resources/sampledVectors.csv")
+        val vectors = getComplexVectorsFromFile("src/test/resources/sampledVectors.csv", 1, numDim)
         compareNormalizedVectors(vectors as Array<VectorValue<*>>, sb, File(outDir, "complex64SBLSHSignaturesUniformN${N}L${L}_withoutImag.csv"), false)
     }
 
@@ -93,7 +93,7 @@ internal class SuperBitTest {
         println("N: $N, L: $L")
         val outDir = File("testOut/fromCsv")
         val sb = SuperBit(N, L, 1234, SuperBit.SamplingMethod.UNIFORM, Complex64VectorValue.zero(20))
-        val vectors = getComplexVectorsFromFile("src/test/resources/sampledVectors.csv")
+        val vectors = getComplexVectorsFromFile("src/test/resources/sampledVectors.csv", 1, numDim)
         compareNormalizedVectors(vectors as Array<VectorValue<*>>, sb, File(outDir, "complex64SBLSHSignaturesUniformN${N}L${L}_withImag.csv"), true)
     }
 

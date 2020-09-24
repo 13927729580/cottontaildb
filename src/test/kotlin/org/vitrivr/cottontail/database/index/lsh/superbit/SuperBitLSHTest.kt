@@ -138,9 +138,9 @@ internal class SuperBitLSHTest {
         val lsh = SuperBitLSH(stages, buckets, numDim, seed, DoubleVectorValue.zero(numDim), false, SuperBit.SamplingMethod.UNIFORM)
         val file = File("src/test/resources/sampledVectors.csv")
         if (!file.exists()) {
-            sampleVectorsFromCsv("src/test/resources/complexVectors.csv", "src/test/resources/sampledVectors.csv", Random())
+            sampleVectorsFromCsv("src/test/resources/complexVectors.csv", false, "src/test/resources/sampledVectors.csv", Random())
         }
-        val vectors = getComplexVectorsFromFile(file.toString())
+        val vectors = getComplexVectorsFromFile(file.toString(), 1, numDim)
         compareNormalizedVectors(vectors as Array<VectorValue<*>>, lsh,
             File("testOut", "fromCsv/CsvVectorsBucketDistancesUniform_stages${stages}buckets${buckets}seed${seed}_withoutImag.csv"))
     }
@@ -154,9 +154,9 @@ internal class SuperBitLSHTest {
         val lsh = SuperBitLSH(stages, buckets, numDim, seed, DoubleVectorValue.zero(numDim), true, SuperBit.SamplingMethod.UNIFORM)
         val file = File("src/test/resources/sampledVectors.csv")
         if (!file.exists()) {
-            sampleVectorsFromCsv("src/test/resources/complexVectors.csv", "src/test/resources/sampledVectors.csv", Random())
+            sampleVectorsFromCsv("src/test/resources/complexVectors.csv", false, "src/test/resources/sampledVectors.csv", Random())
         }
-        val vectors = getComplexVectorsFromFile(file.toString())
+        val vectors = getComplexVectorsFromFile(file.toString(), 1, numDim)
         compareNormalizedVectors(vectors as Array<VectorValue<*>>, lsh,
                 File("testOut", "fromCsv/CsvVectorsBucketDistancesUniform_stages${stages}buckets${buckets}seed${seed}_withImag.csv"))
     }
@@ -170,9 +170,9 @@ internal class SuperBitLSHTest {
         val lsh = SuperBitLSH(stages, buckets, numDim, seed, DoubleVectorValue.zero(numDim), false, SuperBit.SamplingMethod.GAUSSIAN)
         val file = File("src/test/resources/sampledVectors.csv")
         if (!file.exists()) {
-            sampleVectorsFromCsv("src/test/resources/complexVectors.csv", "src/test/resources/sampledVectors.csv", Random())
+            sampleVectorsFromCsv("src/test/resources/complexVectors.csv", false, "src/test/resources/sampledVectors.csv", Random())
         }
-        val vectors = getComplexVectorsFromFile(file.toString())
+        val vectors = getComplexVectorsFromFile(file.toString(), 1, numDim)
         compareNormalizedVectors(vectors as Array<VectorValue<*>>, lsh,
                 File("testOut", "fromCsv/CsvVectorsBucketDistancesGaussian_stages${stages}buckets${buckets}seed${seed}_withoutImag.csv"))
     }
@@ -186,9 +186,9 @@ internal class SuperBitLSHTest {
         val lsh = SuperBitLSH(stages, buckets, numDim, seed, DoubleVectorValue.zero(numDim), true, SuperBit.SamplingMethod.GAUSSIAN)
         val file = File("src/test/resources/sampledVectors.csv")
         if (!file.exists()) {
-            sampleVectorsFromCsv("src/test/resources/complexVectors.csv", "src/test/resources/sampledVectors.csv", Random())
+            sampleVectorsFromCsv("src/test/resources/complexVectors.csv", false, "src/test/resources/sampledVectors.csv", Random())
         }
-        val vectors = getComplexVectorsFromFile(file.toString())
+        val vectors = getComplexVectorsFromFile(file.toString(), 1, numDim)
         compareNormalizedVectors(vectors as Array<VectorValue<*>>, lsh,
                 File("testOut", "fromCsv/CsvVectorsBucketDistancesGaussian_stages${stages}buckets${buckets}seed${seed}_withImag.csv"))
     }

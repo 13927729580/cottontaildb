@@ -16,9 +16,9 @@ internal class PQCentroidQueryIPTest {
     fun testPQCentroidQuery() {
         val vectorsFile = File("src/test/resources/sampledVectors90000.csv")
         if (!vectorsFile.exists()) {
-            sampleVectorsFromCsv("src/test/resources/complexVectors.csv", vectorsFile.toString(), Random(1234L), 1e-2)
+            sampleVectorsFromCsv("src/test/resources/complexVectors.csv", false, vectorsFile.toString(), Random(1234L), 1e-2)
         }
-        val data = getComplexVectorsFromFile(vectorsFile.toString())
+        val data = getComplexVectorsFromFile(vectorsFile.toString(), 1, 20)
         val realData = Array(data.size) { i ->
             DoubleArray(data[i].logicalSize) { j ->
                 data[i][j].real.value

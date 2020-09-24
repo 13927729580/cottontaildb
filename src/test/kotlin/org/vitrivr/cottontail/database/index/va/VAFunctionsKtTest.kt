@@ -166,7 +166,7 @@ internal class VAFunctionsKtTest {
     @ExperimentalStdlibApi
     @Test
     fun boundComplexDotProductFromFile() {
-        val data = getComplexVectorsFromFile("src/test/resources/sampledVectors.csv/")
+        val data = getComplexVectorsFromFile("src/test/resources/sampledVectors.csv/", 1, numDim)
         val dataReal = data.map { vec -> vec.map { it.real.value }.toDoubleArray() }.toTypedArray()
         val dataImag = data.map { vec -> vec.map { it.imaginary.value }.toDoubleArray() }.toTypedArray()
         val marksReal = MarksGenerator.getEquidistantMarks(dataReal, IntArray(numDim) { marksPerDim })
@@ -212,7 +212,7 @@ internal class VAFunctionsKtTest {
     @ParameterizedTest
     @ValueSource(ints = [5, 10, 20, 50])
     fun boundsSpeedFromFile(mpd: Int) {
-        val data = getComplexVectorsFromFile("src/test/resources/sampledVectors.csv/")
+        val data = getComplexVectorsFromFile("src/test/resources/sampledVectors.csv/", 1, numDim)
         val dataReal = data.map { vec -> vec.map { it.real.value }.toDoubleArray() }.toTypedArray()
         val dataImag = data.map { vec -> vec.map { it.imaginary.value }.toDoubleArray() }.toTypedArray()
         val marksReal = MarksGenerator.getEquidistantMarks(dataReal, IntArray(20) { mpd })

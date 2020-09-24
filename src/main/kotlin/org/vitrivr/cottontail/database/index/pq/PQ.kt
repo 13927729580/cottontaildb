@@ -1,6 +1,8 @@
 package org.vitrivr.cottontail.database.index.pq
 
+import org.apache.commons.math3.linear.MatrixUtils
 import org.apache.commons.math3.linear.MatrixUtils.createRealMatrix
+import org.apache.commons.math3.stat.correlation.Covariance
 import org.mapdb.DataInput2
 import org.mapdb.DataOutput2
 import org.slf4j.Logger
@@ -10,16 +12,13 @@ import org.slf4j.LoggerFactory
  * Product Quantizer that minimizes inner product error. input data should be permuted for better results!
  * author: Gabriel Zihlmann
  * date: 25.8.2020
+ * Roughly following Guo et al. 2015 - Quantization based Fast Inner Product Search
  */
 class PQ(val codebooks: Array<PQCodebook>) {
     companion object Serializer : org.mapdb.Serializer<PQ> {
         private val LOGGER: Logger = LoggerFactory.getLogger(PQ::class.java)
         private val doubleArraySerializer = org.mapdb.Serializer.DOUBLE_ARRAY!!
-        fun fromPermutedData(numSubspaces: Int, numCentroids: Int, permutedData: Array<DoubleArray>, permutedExampleQueryData: Array<DoubleArray>): Pair<PQ, Array<IntArray>> {
-            return fromPermutedData(numSubspaces, numCentroids, permutedData)
-        }
-
-        fun fromPermutedData(numSubspaces: Int, numCentroids: Int, permutedData: Array<DoubleArray>): Pair<PQ, Array<IntArray>> {
+        fun fromPermutedData(numSubspaces: Int, numCentroids: Int, permutedData: Array<DoubleArray>, permutedExampleQueryData: Array<DoubleArray>? = null): Pair<PQ, Array<IntArray>> {
             LOGGER.info("Initializing PQ from initial data.")
             // some assumptions. Some are for documentation, some are cheap enough to actually keep and check
             require(permutedData.all { it.size == permutedData[0].size })
@@ -31,18 +30,18 @@ class PQ(val codebooks: Array<PQCodebook>) {
             val subspaceSignatures = Array(permutedData.size) { IntArray(numSubspaces) }
             LOGGER.info("Creating subspace data")
             // wasteful copy...
-            val permutedSubspaceData = (0 until numSubspaces).map { k ->
-                k to Array(permutedData.size) { i ->
-                    DoubleArray(dimensionsPerSubspace) { j ->
-                        permutedData[i][k * dimensionsPerSubspace + j]
-                    }
-                }
-            }
+            val permutedSubspaceData = splitDataIntoSubspaces(numSubspaces, permutedData, dimensionsPerSubspace).mapIndexed { k, ssData -> k to ssData  }
+            val permutedSubspaceExampleData = permutedExampleQueryData?.let { splitDataIntoSubspaces(numSubspaces, it, dimensionsPerSubspace) }
             LOGGER.info("Learning centroids")
             val codebooks = Array<PQCodebook?>(numSubspaces) { null }
-            permutedSubspaceData.toList().parallelStream().forEach { (k, permutedData) ->
-                LOGGER.info("Processing subspace ${k + 1} of $numSubspaces")
-                val (codebook, signatures) = PQCodebook.learnFromData(permutedData, numCentroids, 1000)
+            permutedSubspaceData.parallelStream().forEach { (k, permutedData) ->
+                LOGGER.info("Processing subspace ${k + 1}")
+                val (codebook, signatures) = if (permutedSubspaceExampleData != null){
+                    val inverseQCovMatrix = MatrixUtils.inverse(Covariance(permutedSubspaceExampleData[k], false).covarianceMatrix)
+                    PQCodebook.learnFromData(permutedData, inverseQCovMatrix, numCentroids, 1000) // todo: check maxIterations parameter if relevant...
+                } else {
+                    PQCodebook.learnFromData(permutedData, numCentroids, 1000)
+                }
                 signatures.forEachIndexed { i, c ->
                     subspaceSignatures[i][k] = c
                 }
@@ -51,6 +50,16 @@ class PQ(val codebooks: Array<PQCodebook>) {
             }
             LOGGER.info("PQ initialization done.")
             return PQ(codebooks.map { it!! }.toTypedArray()) to subspaceSignatures
+        }
+
+        private fun splitDataIntoSubspaces(numSubspaces: Int, permutedData: Array<DoubleArray>, dimensionsPerSubspace: Int): List<Array<DoubleArray>> {
+            return (0 until numSubspaces).map { k ->
+                Array(permutedData.size) { i ->
+                    DoubleArray(dimensionsPerSubspace) { j ->
+                        permutedData[i][k * dimensionsPerSubspace + j]
+                    }
+                }
+            }
         }
 
         /**
