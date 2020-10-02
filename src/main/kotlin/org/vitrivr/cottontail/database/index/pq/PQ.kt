@@ -7,6 +7,8 @@ import org.mapdb.DataInput2
 import org.mapdb.DataOutput2
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import org.vitrivr.cottontail.model.values.Complex32VectorValue
+import org.vitrivr.cottontail.model.values.types.ComplexVectorValue
 
 /**
  * Product Quantizer that minimizes inner product error. input data should be permuted for better results!
@@ -171,12 +173,12 @@ class PQ(val codebooks: Array<PQCodebook>) {
         }
     }
 
-    fun precomputeCentroidQueryIP(q: DoubleArray): PQCentroidQueryIP {
+    fun precomputeCentroidQueryIP(permutedQuery: DoubleArray): PQCentroidQueryIP {
         return PQCentroidQueryIP(Array(numSubspaces) { k ->
             DoubleArray(numCentroids) { i ->
                 var ip = 0.0
                 for (j in 0 until dimensionsPerSubspace) {
-                    ip += q[k * dimensionsPerSubspace + j] * codebooks[k].centroids[i][j]
+                    ip += permutedQuery[k * dimensionsPerSubspace + j] * codebooks[k].centroids[i][j]
                 }
                 ip
             }
@@ -184,12 +186,47 @@ class PQ(val codebooks: Array<PQCodebook>) {
         )
     }
 
-    fun precomputeCentroidQueryIPFloat(q: DoubleArray): PQCentroidQueryIPFloat {
+    fun precomputeCentroidQueryIPFloat(permutedQuery: DoubleArray): PQCentroidQueryIPFloat {
         return PQCentroidQueryIPFloat(Array(numSubspaces) { k ->
             FloatArray(numCentroids) { i ->
                 var ip = 0.0F
                 for (j in 0 until dimensionsPerSubspace) {
-                    ip += (q[k * dimensionsPerSubspace + j] * codebooks[k].centroids[i][j]).toFloat()
+                    ip += (permutedQuery[k * dimensionsPerSubspace + j] * codebooks[k].centroids[i][j]).toFloat()
+                }
+                ip
+            }
+        }
+        )
+    }
+
+    /*
+    reversePermutation: intArray holding at index i the index of the dimension in the original space
+    so: i is in "permuted space", the value in the array is where it was in the unpermuted space -> call it
+    reversePermutation
+     */
+    fun precomputeCentroidQueryRealIPFloat(unPermutedQuery: Complex32VectorValue, reversePermutation: IntArray): PQCentroidQueryIPFloat {
+        return PQCentroidQueryIPFloat(Array(numSubspaces) { k ->
+            FloatArray(numCentroids) { i ->
+                var ip = 0.0F
+                for (j in 0 until dimensionsPerSubspace) {
+                    ip += (unPermutedQuery[reversePermutation[k * dimensionsPerSubspace + j]].real.value * codebooks[k].centroids[i][j]).toFloat()
+                }
+                ip
+            }
+        }
+        )
+    }
+    /*
+    reversePermutation: intArray holding at index i the index of the dimension in the original space
+    so: i is in "permuted space", the value in the array is where it was in the unpermuted space -> call it
+    reversePermutation
+     */
+    fun precomputeCentroidQueryImagIPFloat(unPermutedQuery: Complex32VectorValue, reversePermutation: IntArray): PQCentroidQueryIPFloat {
+        return PQCentroidQueryIPFloat(Array(numSubspaces) { k ->
+            FloatArray(numCentroids) { i ->
+                var ip = 0.0F
+                for (j in 0 until dimensionsPerSubspace) {
+                    ip += (unPermutedQuery[reversePermutation[k * dimensionsPerSubspace + j]].imaginary.value * codebooks[k].centroids[i][j]).toFloat()
                 }
                 ip
             }

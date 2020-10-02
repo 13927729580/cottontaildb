@@ -23,6 +23,7 @@ import org.vitrivr.cottontail.model.basics.Record
 import org.vitrivr.cottontail.model.exceptions.DatabaseException
 import org.vitrivr.cottontail.model.exceptions.StoreException
 import org.vitrivr.cottontail.model.recordset.Recordset
+import org.vitrivr.cottontail.model.values.Complex32VectorValue
 import org.vitrivr.cottontail.model.values.DoubleValue
 import org.vitrivr.cottontail.model.values.types.ComplexVectorValue
 import org.vitrivr.cottontail.utilities.extensions.write
@@ -95,8 +96,8 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
     lateinit var pqImag: PQ
     val pqStoreReal = db.atomicVar(PQ_REAL_NAME, PQ.Serializer).createOrOpen()
     val pqStoreImag = db.atomicVar(PQ_IMAG_NAME, PQ.Serializer).createOrOpen()
-    val reversePermutation: IntArray
-    val permutation: IntArray
+    val permutation: IntArray // use this to permute a record (like iterate over original dimensions i from 0 until n and map it to the permuted dimension given by permutation[i]
+    val reversePermutation: IntArray // use this if you want to find the original dimension corresponding to i when iterating i from 0 until n in permuted space
     val signaturesReal = mutableListOf<IntArray>()
     val signaturesImag = mutableListOf<IntArray>()
     val signaturesTId = mutableListOf<Long>()
@@ -369,37 +370,59 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
         }
         LOGGER.info("Done.")
         val knnQueries = p.query.mapIndexed { i, q_ ->
-            val q = q_ as ComplexVectorValue<*>
+            val q = q_ as Complex32VectorValue
             (if (k == 1) MinSingleSelection<ComparablePair<Long, Float>>() else MinHeapSelection<ComparablePair<Long, Float>>(k)) to q
         }
-        knnQueries.parallelStream().forEach { (knn, q) ->
+        val chunksize = 1
+        if (chunksize > 1) {
+            knnQueries.chunked(chunksize).parallelStream().forEach { knnQueriesChunk ->
 //            LOGGER.info("Processing query ${i + 1} of ${p.query.size}")
-            LOGGER.info("Permuting query")
-            val permutedQueryReal = DoubleArray(q.logicalSize)
-            val permutedQueryImag = DoubleArray(q.logicalSize)
-            q.forEachIndexed { j, c -> // directly accessing arrays via cast to ComplexXXVectorValue is not really faster overall
-                permutedQueryReal[permutation[j]] = c.real.value.toDouble()
-                permutedQueryImag[permutation[j]] = c.imaginary.value.toDouble()
-            }
-            LOGGER.info("Precomputing IPs between query and centroids")
-            val queryCentroidIPRealReal = pqReal.precomputeCentroidQueryIPFloat(permutedQueryReal)
-            val queryCentroidIPImagImag = pqImag.precomputeCentroidQueryIPFloat(permutedQueryImag)
-            val queryCentroidIPRealImag = pqReal.precomputeCentroidQueryIPFloat(permutedQueryImag)
-            val queryCentroidIPImagReal = pqImag.precomputeCentroidQueryIPFloat(permutedQueryReal)
-            LOGGER.info("Scanning signatures")
-            signaturesReal.indices.forEach {
-                val sigOffset = it * sigLength * 2 // offset into sign array. first half of signature is real, other is im
-                val tid = signaturesTId[it]
-                val absIPSqApprox = ((
-                        queryCentroidIPRealReal.approximateIP(sigReIm, sigOffset, sigLength)
-                                + queryCentroidIPImagImag.approximateIP(sigReIm, sigOffset + sigLength, sigLength)).pow(2)
-                        + (
-                        queryCentroidIPImagReal.approximateIP(sigReIm, sigOffset + sigLength, sigLength)
-                                - queryCentroidIPRealImag.approximateIP(sigReIm, sigOffset, sigLength)
-                        ).pow(2)
-                        )
+                LOGGER.info("Precomputing IPs between query and centroids")
+                val queryCentroidIPRealReal = Array(knnQueriesChunk.size) { pqReal.precomputeCentroidQueryRealIPFloat(knnQueriesChunk[it].second, reversePermutation) }
+                val queryCentroidIPImagImag = Array(knnQueriesChunk.size) { pqImag.precomputeCentroidQueryImagIPFloat(knnQueriesChunk[it].second, reversePermutation) }
+                val queryCentroidIPRealImag = Array(knnQueriesChunk.size) { pqReal.precomputeCentroidQueryImagIPFloat(knnQueriesChunk[it].second, reversePermutation) }
+                val queryCentroidIPImagReal = Array(knnQueriesChunk.size) { pqImag.precomputeCentroidQueryRealIPFloat(knnQueriesChunk[it].second, reversePermutation) }
+                LOGGER.info("Scanning signatures")
+                signaturesReal.indices.forEach {
+                    knnQueriesChunk.indices.forEach { i ->
+                        val sigOffset = it * sigLength * 2 // offset into sign array. first half of signature is real, other is im
+                        val tid = signaturesTId[it]
+                        val absIPSqApprox = ((
+                                queryCentroidIPRealReal[i].approximateIP(sigReIm, sigOffset, sigLength)
+                                        + queryCentroidIPImagImag[i].approximateIP(sigReIm, sigOffset + sigLength, sigLength)).pow(2)
+                                + (
+                                queryCentroidIPImagReal[i].approximateIP(sigReIm, sigOffset + sigLength, sigLength)
+                                        - queryCentroidIPRealImag[i].approximateIP(sigReIm, sigOffset, sigLength)
+                                ).pow(2)
+                                )
 //                if (knn.added < knn.k || knn.peek()!!.second > -absIPSqApprox) // do we really need to create a new pair every single time?
-                knn.offer(ComparablePair(tid, -absIPSqApprox))
+                        knnQueriesChunk[i].first.offer(ComparablePair(tid, -absIPSqApprox))
+                    }
+                }
+            }
+        }
+        else {
+            knnQueries.parallelStream().forEach { (knn, q) ->
+                LOGGER.info("Precomputing IPs between query and centroids")
+                val queryCentroidIPRealReal =  pqReal.precomputeCentroidQueryRealIPFloat(q, reversePermutation)
+                val queryCentroidIPImagImag =  pqImag.precomputeCentroidQueryImagIPFloat(q, reversePermutation)
+                val queryCentroidIPRealImag =  pqReal.precomputeCentroidQueryImagIPFloat(q, reversePermutation)
+                val queryCentroidIPImagReal =  pqImag.precomputeCentroidQueryRealIPFloat(q, reversePermutation)
+                LOGGER.info("Scanning signatures")
+                signaturesReal.indices.forEach {
+                    val sigOffset = it * sigLength * 2 // offset into sign array. first half of signature is real, other is im
+                    val tid = signaturesTId[it]
+                    val absIPSqApprox = ((
+                            queryCentroidIPRealReal.approximateIP(sigReIm, sigOffset, sigLength)
+                                    + queryCentroidIPImagImag.approximateIP(sigReIm, sigOffset + sigLength, sigLength)).pow(2)
+                            + (
+                            queryCentroidIPImagReal.approximateIP(sigReIm, sigOffset + sigLength, sigLength)
+                                    - queryCentroidIPRealImag.approximateIP(sigReIm, sigOffset, sigLength)
+                            ).pow(2)
+                            )
+//                if (knn.added < knn.k || knn.peek()!!.second > -absIPSqApprox) // do we really need to create a new pair every single time?
+                    knn.offer(ComparablePair(tid, -absIPSqApprox))
+                }
             }
         }
         return knnQueries.unzip().first
