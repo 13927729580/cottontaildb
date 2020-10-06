@@ -1,5 +1,6 @@
 package org.vitrivr.cottontail.database.index.pq
 
+import org.slf4j.LoggerFactory
 import org.vitrivr.cottontail.model.values.DoubleValue
 import org.vitrivr.cottontail.model.values.types.ComplexVectorValue
 import java.util.*
@@ -7,9 +8,19 @@ import java.util.*
 /**
  * A class that does KMeans clustering on complex Vectors
  * @author: Gabriel Zihlmann, 3.10.2020
+ * todo: Could the commons math clusterer be used? We can change the Distance function such that
+ *       it would be interpreted in a complex sense. The mean calculation for cluster centers doesn't
+ *       even need adaption...
  */
-class KMeansClustererComplex<T: ComplexVectorValue<*>> (val data: Array<T>, val rng: SplittableRandom, val distance: (a: T, b: T) -> Double) {
-    data class ClusterCenter<T> (val center: T, val clusterPointIndices: IntArray) {
+class KMeansClustererComplex<T: ComplexVectorValue<out Number>> (val data: Array<out T>, val rng: SplittableRandom, val distance: (a: T, b: T) -> Double) {
+    companion object {
+        private val LOGGER = LoggerFactory.getLogger(KMeansClustererComplex::class.java)
+    }
+    /**
+     * Cluster Center contains the centroid vector and an array with the indexes (in the original data
+     * of this Clusterer object) that were assigned to this cluster center
+     */
+    data class ClusterCenter<out T> (val center: T, val clusterPointIndices: IntArray) {
         override fun equals(other: Any?): Boolean {
             if (this === other) return true
             if (javaClass != other?.javaClass) return false
@@ -29,17 +40,22 @@ class KMeansClustererComplex<T: ComplexVectorValue<*>> (val data: Array<T>, val 
         }
     }
 
-    fun cluster(k: Int, eps: Double, maxIterations: Int): Array<ClusterCenter<T>> {
+    /**
+     * returns an array of [ClusterCenter]
+     */
+    fun cluster(k: Int, maxIterations: Int): Array<ClusterCenter<T>> {
         // initialize by choosing a random datapoint as cluster centers
         var centroids = List(k) {
             data[rng.nextInt(data.size)].copy() as T // unchecked is ok, since we copy from T type...
         }
 
         val assignedVectors = Array(k) { mutableListOf<Int>() }
+        val assignedCenter = IntArray(data.size)
         var iter = 0
         while (iter < maxIterations) {
             iter++
             // assign new centroids
+            var assignmentChanged = 0
             assignedVectors.forEach { it.clear() }
             data.forEachIndexed{ i, v ->
                 var minIndex = -1
@@ -51,23 +67,28 @@ class KMeansClustererComplex<T: ComplexVectorValue<*>> (val data: Array<T>, val 
                         minDist = d
                     }
                 }
+                if (assignedCenter[i] != minIndex) {
+                    assignmentChanged++
+                    assignedCenter[i] = minIndex
+                }
                 assignedVectors[minIndex].add(i)
             }
             // new centers
-            var meanMovement = 0.0
             centroids = assignedVectors.mapIndexed { i, vecIndexes ->
                 var mean: T = data[vecIndexes[0]]
                 vecIndexes.subList(1, vecIndexes.size).forEach {
                     mean = (mean + data[it]) as T
                 } // sum up all vectors, then divide by their count
                 mean = (mean / DoubleValue(vecIndexes.size.toDouble())) as T
-                meanMovement += (centroids[i] - mean).norm2().value.toDouble()
                 mean
             }
-            if (meanMovement < eps) {
+            LOGGER.trace("Iteration $iter AssignmentsChanged $assignmentChanged")
+            if (assignmentChanged == 0) {
                 break
             }
         }
+        LOGGER.info("Clusterer stopped after $iter iterations (maxIterations=$maxIterations)")
+        if (iter >= maxIterations) LOGGER.warn("Clusterer reached maximum iterations!")
         return (centroids zip assignedVectors).map { (centroid, vectors) ->
             ClusterCenter(centroid, vectors.toIntArray())
         }.toTypedArray()

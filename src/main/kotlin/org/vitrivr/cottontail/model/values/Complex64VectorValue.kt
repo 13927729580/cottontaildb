@@ -565,4 +565,18 @@ inline class Complex64VectorValue(val data: DoubleArray) : ComplexVectorValue<Do
      */
     override fun l2(other: VectorValue<*>): DoubleValue = l2sq(other).sqrt()
 
+    /**
+     * Returns the subvector of length [length] starting from [start] of this [ComplexVectorValue].
+     *
+     * @param start Index of the first entry of the returned vector.
+     * @param length how many elements, including start, to return
+     * @return The subvector starting at index start containing length elements. Or original object if length == size.
+     */
+    override fun get(start: Int, length: Int) = if (length == logicalSize) this
+        else Complex64VectorValue(
+                DoubleArray(length shl 1) {
+                    data[(start shl 1) + it]
+                }
+        )
+
 }

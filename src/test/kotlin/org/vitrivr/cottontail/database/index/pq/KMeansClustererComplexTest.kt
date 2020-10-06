@@ -39,7 +39,7 @@ internal class KMeansClustererComplexTest {
         val clusterer_ = KMeansClustererComplex<Complex64VectorValue>(dataC, rng) { a, b ->
             (a - b).norm2().value
         }
-        val clusters_ = clusterer_.cluster(k, 1e-5, maxIter)
+        val clusters_ = clusterer_.cluster(k, maxIter)
         clusters_.forEachIndexed { i, it ->
             println("center$i")
             println(it.center.map { centerComponent -> centerComponent.real.value }.joinToString())

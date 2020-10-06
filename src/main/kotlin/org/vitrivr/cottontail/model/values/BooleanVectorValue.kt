@@ -126,4 +126,15 @@ inline class BooleanVectorValue(val value: BitSet) : VectorValue<Byte> {
     override fun dot(other: VectorValue<*>): RealValue<*> {
         throw UnsupportedOperationException("A BooleanVector array cannot be used to perform arithmetic operations!")
     }
+
+    /**
+     * Returns the subvector of length [length] starting from [start] of this [VectorValue].
+     *
+     * @param start Index of the first entry of the returned vector.
+     * @param length how many elements, including start, to return
+     * @return The subvector starting at index start containing length elements.
+     */
+    override fun get(start: Int, length: Int): VectorValue<Byte> {
+        TODO("Not yet implemented")
+    }
 }

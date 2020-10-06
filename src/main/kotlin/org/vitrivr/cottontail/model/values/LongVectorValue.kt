@@ -180,4 +180,15 @@ inline class LongVectorValue(val data: LongArray) : RealVectorValue<Long> {
         }
         return FloatValue(sum.pow(1.0/p))
     }
+
+    /**
+     * Returns the subvector of length [length] starting from [start] of this [VectorValue].
+     *
+     * @param start Index of the first entry of the returned vector.
+     * @param length how many elements, including start, to return
+     * @return The subvector starting at index start containing length elements.
+     */
+    override fun get(start: Int, length: Int): VectorValue<Long> {
+        TODO("Not yet implemented")
+    }
 }

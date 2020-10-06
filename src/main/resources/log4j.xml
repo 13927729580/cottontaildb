@@ -42,6 +42,10 @@
     <appender-ref ref="vafile"/>
   </logger>
 
+  <logger name="org.vitrivr.cottontail.database.index.pq.KMeansClustererComplex">
+    <level value="TRACE" />
+  </logger>
+
   <!-- Root logger for Cottontail DB -->
   <root>
     <level value="INFO"/>

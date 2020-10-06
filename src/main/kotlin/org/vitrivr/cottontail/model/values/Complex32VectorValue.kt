@@ -492,4 +492,15 @@ inline class Complex32VectorValue(val data: FloatArray) : ComplexVectorValue<Flo
             DoubleValue(sum)
         }
     } else throw IllegalArgumentException("Dimensions ${this.logicalSize} and ${other.logicalSize} don't agree!")
+
+    /**
+     * Returns the subvector of length [length] starting from [start] of this [ComplexVectorValue].
+     *
+     * @param start Index of the first entry of the returned vector.
+     * @param length how many elements, including start, to return
+     * @return The subvector starting at index start containing length elements. Or original object if length == size.
+     */
+    override fun get(start: Int, length: Int): ComplexVectorValue<Float> {
+        TODO("Not yet implemented")
+    }
 }

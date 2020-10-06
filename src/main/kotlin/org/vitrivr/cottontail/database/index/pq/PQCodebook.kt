@@ -1,30 +1,94 @@
 package org.vitrivr.cottontail.database.index.pq
 
+import org.apache.commons.math3.complex.Complex
+import org.apache.commons.math3.linear.*
 import org.apache.commons.math3.linear.MatrixUtils.*
-import org.apache.commons.math3.linear.RealMatrix
+import org.apache.commons.math3.ml.clustering.CentroidCluster
 import org.apache.commons.math3.ml.clustering.Clusterable
 import org.apache.commons.math3.ml.clustering.KMeansPlusPlusClusterer
 import org.apache.commons.math3.stat.correlation.Covariance
-import org.mapdb.DataInput2
-import org.mapdb.DataOutput2
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import org.vitrivr.cottontail.model.values.*
+import org.vitrivr.cottontail.model.values.types.ComplexValue
+import org.vitrivr.cottontail.model.values.types.ComplexVectorValue
+import org.vitrivr.cottontail.model.values.types.RealVectorValue
+import org.vitrivr.cottontail.model.values.types.VectorValue
+import java.lang.IllegalArgumentException
+import java.util.*
+import kotlin.reflect.KClass
 
 /**
  * Class representing a codebook for a single subspace for Product Quantization
  * The codebook contains the centroids (real valued vectors) for the subspace
+ *
  */
-class PQCodebook (val centroids: Array<DoubleArray>, val inverseDataCovarianceMatrix: RealMatrix) {
+class PQCodebook (val centroids: Array<out VectorValue<*>>, val inverseDataCovarianceMatrix: Array<out VectorValue<*>>) {
     companion object {
         private val LOGGER: Logger = LoggerFactory.getLogger(PQCodebook::class.java)
-        fun learnFromData(subspaceData: Array<DoubleArray>, numCentroids: Int, maxIterations: Int): Pair<PQCodebook, IntArray> {
+        /**
+         * Internally, for real valued data, the clustering is done with apache commons k-means++ in double precision
+         * but the returned codebook contains centroids of the same datatype as was supplied
+         */
+        fun learnFromData(subspaceData: Array<RealVectorValue<*>>, numCentroids: Int, maxIterations: Int): Pair<PQCodebook, IntArray> {
             LOGGER.info("Calculating inverse data covariance matrix from supplied data.")
+            require(subspaceData.all { it::class.java == subspaceData[0]::class.java })
+            val (castSubspaceData, inverseDataCovMatrix) =
+                    when(subspaceData[0]) {
+                        is DoubleVectorValue -> {
+                            val array = Array(subspaceData.size) {
+                                (subspaceData[it] as DoubleVectorValue).data
+                            }
+                            array to inverse(Covariance(array, false).covarianceMatrix)
+                        }
+                        is FloatVectorValue -> {
+                            val array = Array(subspaceData.size) {
+                                (subspaceData[it] as FloatVectorValue).data.map { j -> j.toDouble() }.toDoubleArray()
+                            }
+                            array to inverse(Covariance(array, false).covarianceMatrix)
+                        }
+                        else -> {
+                            TODO("Other types not yet implemented for PQ")
+                        }
+                    }
+            return learnFromData(castSubspaceData, inverseDataCovMatrix, numCentroids, maxIterations, subspaceData[0].javaClass)
+        }
+
+        fun learnFromData(subspaceData: Array<DoubleArray>, numCentroids: Int, maxIterations: Int): Pair<PQCodebook, IntArray> {
             val inverseDataCovMatrix = inverse(Covariance(subspaceData, false).covarianceMatrix)
-            return learnFromData(subspaceData, inverseDataCovMatrix, numCentroids, maxIterations)
+            return learnFromData(subspaceData, inverseDataCovMatrix, numCentroids, maxIterations, DoubleVectorValue::class.java)
         }
 
         fun learnFromData(subspaceData: Array<DoubleArray>, inverseDataCovMatrix: RealMatrix, numCentroids: Int, maxIterations: Int): Pair<PQCodebook, IntArray> {
-            val learnedCentroids = Array(numCentroids) { DoubleArray(subspaceData[0].size) }
+            return learnFromData(subspaceData, inverseDataCovMatrix, numCentroids, maxIterations, DoubleVectorValue::class.java)
+        }
+
+        fun learnFromData(subspaceData: Array<DoubleArray>, inverseDataCovMatrix: RealMatrix, numCentroids: Int, maxIterations: Int, type: Class<*>): Pair<PQCodebook, IntArray> {
+            val (signatures, centroidClusters) = clusterData(subspaceData, numCentroids, maxIterations, inverseDataCovMatrix)
+            LOGGER.info("Building codebook and signatures from commons math result")
+            val (learnedCentroids, castInvDataCovMatrix) =
+                when(type) {
+                     DoubleVectorValue::class.java -> {
+                         Pair(Array(numCentroids) {
+                             DoubleVectorValue(centroidClusters[it].center.point)
+                         }, inverseDataCovMatrix.data.map { DoubleVectorValue(it) }.toTypedArray())
+                    }
+                    FloatVectorValue::class.java -> {
+                        Pair(Array(numCentroids) {
+                            FloatVectorValue(centroidClusters[it].center.point.map { v -> v.toFloat() }.toFloatArray())
+                        }, inverseDataCovMatrix.data.map { FloatVectorValue(it.map { v -> v.toFloat() }.toFloatArray()) }.toTypedArray())
+                    }
+                    else -> throw IllegalArgumentException("Unsupported type ${type}")
+                }
+            centroidClusters.forEachIndexed { i, cluster ->
+                cluster.points.forEach {
+                    signatures[it.index] = i
+                }
+            }
+            return PQCodebook(learnedCentroids, castInvDataCovMatrix) to signatures
+        }
+
+        private fun clusterData(subspaceData: Array<DoubleArray>, numCentroids: Int, maxIterations: Int, inverseDataCovMatrix: RealMatrix): Pair<IntArray, MutableList<CentroidCluster<Vector>>> {
             val signatures = IntArray(subspaceData.size)
             // kmeans clusterer with mahalanobis distance
             val clusterer = KMeansPlusPlusClusterer<Vector>(numCentroids, maxIterations) { a, b ->
@@ -32,36 +96,82 @@ class PQCodebook (val centroids: Array<DoubleArray>, val inverseDataCovarianceMa
             }
             LOGGER.info("Learning...")
             val centroidClusters = clusterer.cluster(subspaceData.mapIndexed { i, value ->
-                Vector(value, i) })
+                Vector(value, i)
+            })
             LOGGER.info("Done learning.")
-            LOGGER.info("Building codebook and signatures from commons math result")
-            centroidClusters.forEachIndexed { i, cluster ->
-                learnedCentroids[i] = cluster.center.point
-                cluster.points.forEach {
-                    signatures[it.index] = i
+            return Pair(signatures, centroidClusters)
+        }
+
+        /** todo: make learning work with complex data...
+        *         apache commons clustering doesn't work with complex out of box, so need to probably roll our own...
+        *         we could re-interpret the doubles in complex way for distance calculation which would enable
+        *         us to use the commons clusterer
+        */
+        fun learnFromData(subspaceData: Array<out ComplexVectorValue<out Number>>, numCentroids: Int, maxIterations: Int): Pair<PQCodebook, IntArray> {
+            val cov = complexCovarianceMatrix(subspaceData)
+            val inverseDataCovMatrixCommons = invertComplexMatrix(cov)
+            val inverseDataCovMatrix = fieldMatrixToVectorArray(inverseDataCovMatrixCommons, subspaceData[0]::class)
+            val c = KMeansClustererComplex<ComplexVectorValue<*>>(subspaceData, SplittableRandom(1234L)) { a, b ->
+                mahalanobisSqOpt(a, 0, a.logicalSize, b, 0, b.logicalSize, inverseDataCovMatrix)
+            }
+            val clusterResults = c.cluster(numCentroids, maxIterations)
+            val signatures = IntArray(subspaceData.size)
+            val centroids = clusterResults.mapIndexed { i, clusterCenter ->
+                clusterCenter.clusterPointIndices.forEach { clusterPointIndex ->
+                        signatures[clusterPointIndex] = i
+                    }
+                clusterCenter.center
+            }.toTypedArray()
+            return PQCodebook(centroids, inverseDataCovMatrix.map { it }.toTypedArray()) to signatures
+        }
+
+        /**
+         * todo: I'm sure this when construct can be made prettier instead of explicit type checking. Of course also applies to code above
+         */
+        private fun fieldMatrixToVectorArray(matrixCommons: FieldMatrix<Complex>, type: KClass<out ComplexVectorValue<*>>): Array<ComplexVectorValue<*>> {
+            return Array(matrixCommons.data.size) { i ->
+                when (type) {
+                    Complex32VectorValue::class -> {
+                        Complex32VectorValue(matrixCommons.data[i].map { Complex32Value(it.real.toFloat(), it.imaginary.toFloat()) }.toTypedArray())
+                    }
+                    Complex64VectorValue::class -> {
+                        Complex32VectorValue(matrixCommons.data[i].map { Complex64Value(it.real, it.imaginary) }.toTypedArray())
+                    }
+                    else -> {
+                        error("Unsupported type $type")
+                    }
                 }
             }
-            return PQCodebook(learnedCentroids, inverseDataCovMatrix) to signatures
         }
 
-        inline fun mahalanobisSqNaive(a: DoubleArray, b: DoubleArray, inverseDataCovMatrix: RealMatrix): Double {
-            /**
-             * todo: speed this up!  This is 99% of CPU time... Mostly spent for the commons math operations
-             */
-            require(a.size == b.size)
-            val diff = createColumnRealMatrix(DoubleArray(a.size) {
-                a[it] - b[it]
+        private fun invertComplexMatrix(matrix: FieldMatrix<Complex>): FieldMatrix<Complex> {
+            val lud = FieldLUDecomposition<Complex>(matrix)
+            return lud.solver.inverse
+        }
+
+        /**
+         * estimate cov matrix in real case via Q_XX = M_X * M_X^T
+         * we estimate cov matrix in complex case as Q_XX = 1/n * M_X * M_X^H where ()^H means conjugate transpose
+         */
+        private fun complexCovarianceMatrix(data: Array<out ComplexVectorValue<*>>): FieldMatrix<Complex> {
+            val fieldDataMatrix = BlockFieldMatrix<Complex>(Array(data[0].logicalSize) { row ->
+                Array(data.size) { col ->
+                    Complex(data[col][row].real.value.toDouble(), data[col][row].imaginary.value.toDouble())
+                }
             })
-            val res = diff.transpose().multiply(inverseDataCovMatrix.multiply(diff))
-            check(res.columnDimension == 1)
-            check(res.rowDimension == 1)
-            return res.data[0][0]
+            val fieldDataMatrixH = fieldDataMatrix.transpose()
+            fieldDataMatrixH.walkInOptimizedOrder(object : FieldMatrixChangingVisitor<Complex> {
+                override fun end() : Complex {return Complex.ZERO}
+                override fun start(rows: Int, columns: Int, startRow: Int, endRow: Int, startColumn: Int, endColumn: Int) { return }
+                override fun visit(row: Int, column: Int, value: Complex) = value.conjugate()
+            })
+            return fieldDataMatrix.multiply(fieldDataMatrixH).scalarMultiply(Complex(1.0 / data.size.toDouble(), 0.0))
         }
 
+        /**
+         * todo: only use a single length parameter, 2 make no sense...
+         */
         inline fun mahalanobisSqOpt(a: DoubleArray, aStart: Int, aLength: Int, b: DoubleArray, bStart: Int, bLength: Int, inverseDataCovMatrix: RealMatrix): Double {
-            /**
-             * faster :)
-             */
             require(aLength == bLength)
             require(inverseDataCovMatrix.columnDimension == aLength)
             require(inverseDataCovMatrix.rowDimension == aLength)
@@ -78,10 +188,50 @@ class PQCodebook (val centroids: Array<DoubleArray>, val inverseDataCovarianceMa
             }
             return dist
         }
+
+        /**
+         * todo: only use a single length parameter, 2 make no sense...
+         */
+        inline fun mahalanobisSqOpt(a: VectorValue<*>, aStart: Int, aLength: Int, b: VectorValue<*>, bStart: Int, bLength: Int, inverseDataCovMatrix: Array<out VectorValue<*>>): Double {
+            require(aLength == bLength)
+            require(inverseDataCovMatrix.size == aLength)
+            require(inverseDataCovMatrix[0].logicalSize == aLength)
+            var dist: ComplexValue<*> = when (val t = a::class.java) {
+                Complex32VectorValue::class.java -> Complex32Value.ZERO
+                Complex64VectorValue::class.java -> Complex64Value.ZERO
+                else -> error("Unknown type $t")
+            }
+
+            val diff = if (aLength != a.logicalSize || bLength != b.logicalSize) {
+                (a.get(aStart, aLength) - b.get(bStart, bLength))
+            }
+            else {
+                (a - b)
+            }
+            for (i in inverseDataCovMatrix.indices) {
+                val ip = inverseDataCovMatrix[i].dot(diff)
+                val v = diff[i] * ip
+                dist += v
+            }
+            check(dist.imaginary.abs().value.toDouble() < 1e-5)
+            return dist.real.value.toDouble()
+        }
+
     }
 
     init {
-        require(isSymmetric(inverseDataCovarianceMatrix, 1e-5))
+        require(centroids.all { c -> c.logicalSize == centroids[0].logicalSize && centroids[0]::class.java == c::class.java})
+        require(centroids[0].logicalSize == inverseDataCovarianceMatrix.size)
+        require(inverseDataCovarianceMatrix[0].logicalSize == inverseDataCovarianceMatrix.size
+                && inverseDataCovarianceMatrix.all {
+                    it.logicalSize == inverseDataCovarianceMatrix[0].logicalSize
+                    && it::class.java == inverseDataCovarianceMatrix[0]::class.java
+                }){ "The inverted data covariance matrix must be square and all entries must be of the" +
+                    "same type!" }
+        require(inverseDataCovarianceMatrix.indices.all { inverseDataCovarianceMatrix[it][it].imaginary.value.toDouble() < 1.0e-5 })
+            { "Inverse of data covariance matrix does not have a real diagonal!" }
+        // todo: do better test to actually test for being hermitian, not just whether it's square...
+//        require(isSymmetric(inverseDataCovarianceMatrix, 1e-5))
     }
 
     /**
@@ -90,38 +240,21 @@ class PQCodebook (val centroids: Array<DoubleArray>, val inverseDataCovarianceMa
      * in this case start and length should be specified to indicate the range
      * of the subspace of this [PQCodebook]
      */
-    fun quantizeVector(v: DoubleArray, start: Int = 0, length: Int = v.size): Int {
+    fun quantizeVector(v: VectorValue<*>, start: Int = 0, length: Int = v.logicalSize): Int {
         return smallestMahalanobis(v, start, length)
     }
 
-    /**
-     * Will return the centroid index in the codebook to which the supplied vector has the largest inner product
-     */
-    private fun mips(v: DoubleArray, start: Int, length: Int): Int {
-        var mipIndex = 0
-        var mip = Double.NEGATIVE_INFINITY
-        centroids.forEachIndexed { i, c ->
-            var m =  0.0
-            for (j in 0 until length) {
-                m += v[start + j] * c[j]
-            }
-            if (m > mip) {
-                mip = m
-                mipIndex = i
-            }
-        }
-        return mipIndex
-    }
 
     /**
-     * Will return the centroid index in the codebook to which the supplied vector hast the smallest
+     * Will return the centroid index in the codebook to which the supplied vector has the smallest
      * mahalanobis distance
      */
-    private fun smallestMahalanobis(v: DoubleArray, start: Int, length: Int): Int {
+    private fun smallestMahalanobis(v: VectorValue<*>, start: Int, length: Int): Int {
+        require(v.logicalSize == centroids[0].logicalSize)
         var mahIndex = 0
         var mah = Double.POSITIVE_INFINITY
         centroids.forEachIndexed { i, c ->
-            val m = mahalanobisSqOpt(c, 0, c.size, v, start, length, inverseDataCovarianceMatrix)
+            val m = mahalanobisSqOpt(c, 0, c.logicalSize, v, start, length, inverseDataCovarianceMatrix)
             if (m < mah) {
                 mah = m
                 mahIndex = i

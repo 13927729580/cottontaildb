@@ -35,7 +35,7 @@ internal class PQTest {
         val imagDbData = getImagPart(dbData)
         val imagQData = getImagPart(queryData)
         val numSubspaces = 4
-        val numCentroids = 64
+        val numCentroids = 32
         val seed = 1234L
         val rng = SplittableRandom(seed)
         val (permutation, reversePermutation) = PQIndex.generateRandomPermutation(realDbData[0].size, rng)
@@ -56,30 +56,7 @@ internal class PQTest {
         csvWriter().open(File(outFileDir, "permutation.csv")) {
             writeRow(reversePermutation.map { it.toString() })
         }
-        for (k in 0 until numSubspaces) {
-            csvWriter().open(File(outFileDir, "codebookReal$k.csv")) {
-                writeRow((1..pqReal.first.dimensionsPerSubspace).map { "subspaceDim$it" })
-                pqReal.first.codebooks[k].centroids.forEach { writeRow(it.map { d -> d.toString() }) }
-            }
-            csvWriter().open(File(outFileDir, "codebookImag$k.csv")) {
-                writeRow((1..pqImag.first.dimensionsPerSubspace).map { "subspaceDim$it" })
-                pqImag.first.codebooks[k].centroids.forEach { writeRow(it.map { d -> d.toString() }) }
-            }
-            csvWriter().open(File(outFileDir, "codebookReal${k}inverseCovMatrix.csv")) {
-                val cb = pqReal.first.codebooks[k]
-                writeRow(listOf("row") + (1..pqReal.first.dimensionsPerSubspace).map { "col$it" })
-                cb.inverseDataCovarianceMatrix.data.forEachIndexed { i, row ->
-                    writeRow(listOf(i.toString()) + row.map { it.toString() })
-                }
-            }
-            csvWriter().open(File(outFileDir, "codebookImag${k}inverseCovMatrix.csv")) {
-                val cb = pqImag.first.codebooks[k]
-                writeRow(listOf("row") + (1..pqImag.first.dimensionsPerSubspace).map { "col$it" })
-                cb.inverseDataCovarianceMatrix.data.forEachIndexed { i, row ->
-                    writeRow(listOf(i.toString()) + row.map { it.toString() })
-                }
-            }
-        }
+//        dumpCovarianceMatrixes(numSubspaces, outFileDir, pqReal, pqImag)
         csvWriter().open(File(outFileDir, "dataSignaturesReal.csv")) {
             writeRow((1..numSubspaces).map{ "subspace${it}CentroidNumber"})
             pqReal.second.forEach {
@@ -197,6 +174,34 @@ internal class PQTest {
         vectorsFile.copyTo(File(outFileDir, vectorsFile.name), overwrite = true)
     }
 
+    private fun dumpCovarianceMatrixes(numSubspaces: Int, outFileDir: File, pqReal: Pair<PQ, Array<IntArray>>, pqImag: Pair<PQ, Array<IntArray>>) {
+        TODO()
+//        for (k in 0 until numSubspaces) {
+//            csvWriter().open(File(outFileDir, "codebookReal$k.csv")) {
+//                writeRow((1..pqReal.first.dimensionsPerSubspace).map { "subspaceDim$it" })
+//                pqReal.first.codebooks[k].centroids.forEach { writeRow(it.map { d -> d.toString() }) }
+//            }
+//            csvWriter().open(File(outFileDir, "codebookImag$k.csv")) {
+//                writeRow((1..pqImag.first.dimensionsPerSubspace).map { "subspaceDim$it" })
+//                pqImag.first.codebooks[k].centroids.forEach { writeRow(it.map { d -> d.toString() }) }
+//            }
+//            csvWriter().open(File(outFileDir, "codebookReal${k}inverseCovMatrix.csv")) {
+//                val cb = pqReal.first.codebooks[k]
+//                writeRow(listOf("row") + (1..pqReal.first.dimensionsPerSubspace).map { "col$it" })
+//                cb.inverseDataCovarianceMatrix.data.forEachIndexed { i, row ->
+//                    writeRow(listOf(i.toString()) + row.map { it.toString() })
+//                }
+//            }
+//            csvWriter().open(File(outFileDir, "codebookImag${k}inverseCovMatrix.csv")) {
+//                val cb = pqImag.first.codebooks[k]
+//                writeRow(listOf("row") + (1..pqImag.first.dimensionsPerSubspace).map { "col$it" })
+//                cb.inverseDataCovarianceMatrix.data.forEachIndexed { i, row ->
+//                    writeRow(listOf(i.toString()) + row.map { it.toString() })
+//                }
+//            }
+//        }
+    }
+
     private fun getImagPart(dbData: Array<Complex64VectorValue>): Array<DoubleArray> {
         val imagDbData = Array(dbData.size) { i ->
             DoubleArray(dbData[i].logicalSize) { j ->
@@ -222,5 +227,60 @@ internal class PQTest {
             }
         }
         return permutedRealData
+    }
+
+    @Test
+    fun testPQComplex() {
+        val queryVectorsFile = File("src/test/resources/queryVectors.csv")
+        val vectorsFile = File("src/test/resources/sampledVectors90000.csv")
+        if (!vectorsFile.exists()) {
+            sampleVectorsFromCsv("src/test/resources/complexVectors.csv", false, vectorsFile.toString(), Random(1234L), 1e-2)
+
+        }
+        val dbData = getComplexVectorsFromFile(vectorsFile.toString(), 1, 20)
+
+        val numSubspaces = 4
+        val numCentroids = 32
+        val seed = 1234L
+        val outFileDir = File("testOut/pqComplex/nss${numSubspaces}nc${numCentroids}seed${seed}Phasesum0WithoutQData/")
+        outFileDir.mkdirs()
+        val rng = SplittableRandom(seed)
+        val (permutation, reversePermutation) = PQIndex.generateRandomPermutation(dbData[0].logicalSize, rng)
+        val permutedDbData = dbData.map { v ->
+            Complex64VectorValue(v.indices.map { i ->
+                v[permutation[i]]
+            }.toTypedArray())
+        }.toTypedArray()
+        val pq = PQ.fromPermutedData(numSubspaces, numCentroids, permutedDbData)
+        val numPairs = 100000
+        val header = listOf("i", "j",
+                "ipRealExact", "ipImagExact",
+                "ipRealApprox", "ipImagApprox",
+                "absIPExact", "absIPApprox")
+        println(header.joinToString())
+        csvWriter().open(File(outFileDir, "IPs.csv")) {
+            writeRow(header)
+            for (n in 0 until numPairs) {
+                val i = rng.nextInt(dbData.size)
+                val a = dbData[i]
+                val sigi = pq.second[i]
+                val j = rng.nextInt(dbData.size)
+                val b = dbData[j]
+                val ipExact = a.dot(b)
+                val ipRealEx = ipExact.real.value
+                val ipImagEx = ipExact.imaginary.value
+                val absIPExact = ipExact.abs().real.value
+                val ipApprox = pq.first.approximateAsymmetricIP(sigi, permutedDbData[j])
+                val ipRealApp = ipApprox.real.value
+                val ipImagApp = ipApprox.imaginary.value
+                val absIPApprox = ipApprox.abs().real.value
+                val data = listOf(i.toString(), j.toString(),
+                        ipRealEx.toString(), ipImagEx.toString(),
+                        ipRealApp.toString(), ipImagApp.toString(),
+                        absIPExact.toString(), absIPApprox.toString())
+                if (n % 100 == 0) println(data.joinToString())
+                writeRow(data)
+            }
+        }
     }
 }

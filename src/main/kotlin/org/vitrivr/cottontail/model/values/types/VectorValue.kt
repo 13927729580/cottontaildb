@@ -18,6 +18,15 @@ interface VectorValue<T: Number> : Value {
     operator fun get(i: Int): NumericValue<T>
 
     /**
+     * Returns the subvector of length [length] starting from [start] of this [VectorValue].
+     *
+     * @param start Index of the first entry of the returned vector.
+     * @param length how many elements, including start, to return
+     * @return The subvector starting at index start containing length elements.
+     */
+    fun get(start: Int, length: Int): VectorValue<T>
+
+    /**
      * Returns the i-th entry of  this [VectorValue] as [Boolean].
      *
      * @param i Index of the entry.

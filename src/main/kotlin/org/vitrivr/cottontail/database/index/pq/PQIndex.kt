@@ -38,6 +38,7 @@ import kotlin.math.pow
  * Todo: * signatures: Ints are convenient but wasting a lot of space...
  *         we should move towards only using as many bits as necessary...
  *       * avoid copying
+ *       * generalize to other datatypes than Complex32VV
  *
  */
 @ExperimentalUnsignedTypes
