@@ -3,6 +3,7 @@ package org.vitrivr.cottontail.database.index.pq
 import org.apache.commons.math3.ml.clustering.Clusterable
 import org.apache.commons.math3.ml.clustering.KMeansPlusPlusClusterer
 import org.junit.jupiter.api.Test
+import org.vitrivr.cottontail.database.index.pq.clustering.KMeansClustererComplex
 
 import org.vitrivr.cottontail.model.values.Complex64VectorValue
 import org.vitrivr.cottontail.model.values.DoubleVectorValue
@@ -36,10 +37,10 @@ internal class KMeansClustererComplexTest {
                 println(p.point.joinToString())
             }
         }
-        val clusterer_ = KMeansClustererComplex<Complex64VectorValue>(dataC, rng) { a, b ->
+        val clusterer_ = KMeansClustererComplex<Complex64VectorValue>(k, rng) { a, b ->
             (a - b).norm2().value
         }
-        val clusters_ = clusterer_.cluster(k, maxIter)
+        val clusters_ = clusterer_.cluster(dataC, maxIter)
         clusters_.forEachIndexed { i, it ->
             println("center$i")
             println(it.center.map { centerComponent -> centerComponent.real.value }.joinToString())

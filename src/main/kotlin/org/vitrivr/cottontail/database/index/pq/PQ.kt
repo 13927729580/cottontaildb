@@ -1,29 +1,36 @@
 package org.vitrivr.cottontail.database.index.pq
 
 import org.apache.commons.math3.linear.MatrixUtils
-import org.apache.commons.math3.linear.MatrixUtils.createRealMatrix
 import org.apache.commons.math3.stat.correlation.Covariance
 import org.mapdb.DataInput2
 import org.mapdb.DataOutput2
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import org.vitrivr.cottontail.database.serializers.FixedComplex32VectorSerializer
+import org.vitrivr.cottontail.database.serializers.FixedComplex64VectorSerializer
 import org.vitrivr.cottontail.database.serializers.FixedDoubleVectorSerializer
+import org.vitrivr.cottontail.database.serializers.FixedFloatVectorSerializer
 import org.vitrivr.cottontail.model.values.Complex32VectorValue
+import org.vitrivr.cottontail.model.values.Complex64VectorValue
 import org.vitrivr.cottontail.model.values.DoubleVectorValue
+import org.vitrivr.cottontail.model.values.FloatVectorValue
 import org.vitrivr.cottontail.model.values.types.ComplexVectorValue
 import org.vitrivr.cottontail.model.values.types.NumericValue
 import org.vitrivr.cottontail.model.values.types.RealVectorValue
 import org.vitrivr.cottontail.model.values.types.VectorValue
+import kotlin.reflect.KClass
 
 /**
  * Product Quantizer that minimizes inner product error. input data should be permuted for better results!
  * author: Gabriel Zihlmann
  * date: 25.8.2020
  * Roughly following Guo et al. 2015 - Quantization based Fast Inner Product Search
+ * todo: How to serialize this, now that we have multiple possible types? Pass type as property and serialize it as well (ugly hack)?
  */
-class PQ(val codebooks: Array<PQCodebook>) {
+class PQ(val codebooks: Array<PQCodebook<out VectorValue<*>>>, val type: KClass<out VectorValue<*>>) {
     companion object Serializer : org.mapdb.Serializer<PQ> {
         private val LOGGER: Logger = LoggerFactory.getLogger(PQ::class.java)
+        const val MAX_ITERATIONS = 250
         fun fromPermutedData(numSubspaces: Int, numCentroids: Int, permutedData: Array<out VectorValue<*>>): Pair<PQ, Array<IntArray>> {
             LOGGER.info("Initializing PQ from initial data.")
             // some assumptions. Some are for documentation, some are cheap enough to actually keep and check
@@ -41,15 +48,15 @@ class PQ(val codebooks: Array<PQCodebook>) {
                 k to permutedData.map { v -> v.get(k * dimensionsPerSubspace, dimensionsPerSubspace) }.toTypedArray()
             }
             LOGGER.info("Learning centroids")
-            val codebooks = Array<PQCodebook?>(numSubspaces) { null }
+            val codebooks = Array<PQCodebook<out VectorValue<*>>?>(numSubspaces) { null }
             permutedSubspaceData.parallelStream().forEach { (k, permutedData) ->
                 LOGGER.info("Processing subspace ${k + 1}")
-                val (codebook, signatures) = when (permutedData[0]) {
+                val (codebook: PQCodebook<out VectorValue<*>>, signatures) = when (permutedData[0]) {
                     is RealVectorValue<*> -> {
-                        PQCodebook.learnFromData(permutedData.map { it as RealVectorValue<*> }.toTypedArray(), numCentroids, 1000) // todo: check maxIterations parameter if relevant...
+                        PQCodebook.learnFromRealData(permutedData.map { it as RealVectorValue<*> }.toTypedArray(), numCentroids, MAX_ITERATIONS)
                     }
                     is ComplexVectorValue<*> -> {
-                        PQCodebook.learnFromData(permutedData.map { it as ComplexVectorValue<*> }.toTypedArray(), numCentroids, 1000) // todo: check maxIterations parameter if relevant...
+                        PQCodebook.learnFromComplexData(permutedData.map { it as ComplexVectorValue<*> }.toTypedArray(), numCentroids, MAX_ITERATIONS)
                     }
                     else -> {
                         error("Unknown type")
@@ -62,7 +69,7 @@ class PQ(val codebooks: Array<PQCodebook>) {
                 LOGGER.info("Done processing subspace ${k + 1} of $numSubspaces")
             }
             LOGGER.info("PQ initialization done.")
-            return PQ(codebooks.map { it!! }.toTypedArray()) to subspaceSignatures
+            return PQ(codebooks.map { it!! }.toTypedArray(), permutedData[0]::class) to subspaceSignatures
         }
 
         fun fromPermutedData(numSubspaces: Int, numCentroids: Int, permutedData: Array<DoubleArray>, permutedExampleQueryData: Array<DoubleArray>? = null): Pair<PQ, Array<IntArray>> {
@@ -80,14 +87,14 @@ class PQ(val codebooks: Array<PQCodebook>) {
             val permutedSubspaceData = splitDataIntoSubspaces(numSubspaces, permutedData, dimensionsPerSubspace).mapIndexed { k, ssData -> k to ssData }
             val permutedSubspaceExampleData = permutedExampleQueryData?.let { splitDataIntoSubspaces(numSubspaces, it, dimensionsPerSubspace) }
             LOGGER.info("Learning centroids")
-            val codebooks = Array<PQCodebook?>(numSubspaces) { null }
+            val codebooks = Array<PQCodebook<DoubleVectorValue>?>(numSubspaces) { null }
             permutedSubspaceData.parallelStream().forEach { (k, permutedData) ->
                 LOGGER.info("Processing subspace ${k + 1}")
                 val (codebook, signatures) = if (permutedSubspaceExampleData != null) {
                     val inverseQCovMatrix = MatrixUtils.inverse(Covariance(permutedSubspaceExampleData[k], false).covarianceMatrix)
-                    PQCodebook.learnFromData(permutedData, inverseQCovMatrix, numCentroids, 1000) // todo: check maxIterations parameter if relevant...
+                    PQCodebook.learnFromRealData(permutedData, inverseQCovMatrix, numCentroids, MAX_ITERATIONS)
                 } else {
-                    PQCodebook.learnFromData(permutedData, numCentroids, 1000)
+                    PQCodebook.learnFromRealData(permutedData, numCentroids, MAX_ITERATIONS)
                 }
                 signatures.forEachIndexed { i, c ->
                     subspaceSignatures[i][k] = c
@@ -96,7 +103,7 @@ class PQ(val codebooks: Array<PQCodebook>) {
                 LOGGER.info("Done processing subspace ${k + 1} of $numSubspaces")
             }
             LOGGER.info("PQ initialization done.")
-            return PQ(codebooks.map { it!! }.toTypedArray()) to subspaceSignatures
+            return PQ(codebooks.map { it!! }.toTypedArray(), DoubleVectorValue::class) to subspaceSignatures
         }
 
         private fun splitDataIntoSubspaces(numSubspaces: Int, permutedData: Array<DoubleArray>, dimensionsPerSubspace: Int): List<Array<DoubleArray>> {
@@ -119,6 +126,21 @@ class PQ(val codebooks: Array<PQCodebook>) {
          * @throws IOException in case of an I/O error
          */
         override fun serialize(out: DataOutput2, value: PQ) {
+            val serializer = when(value.type) {
+                Complex32VectorValue::class -> {
+                    FixedComplex32VectorSerializer(value.dimensionsPerSubspace)
+                }
+                Complex64VectorValue::class -> {
+                    FixedComplex64VectorSerializer(value.dimensionsPerSubspace)
+                }
+                DoubleVectorValue::class -> {
+                    FixedDoubleVectorSerializer(value.dimensionsPerSubspace)
+                }
+                FloatVectorValue::class -> {
+                    FixedFloatVectorSerializer(value.dimensionsPerSubspace)
+                }
+                else -> TODO("Other types not yet supported")
+            }
             TODO()
         }
 //            out.packInt(value.numSubspaces)
@@ -146,6 +168,7 @@ class PQ(val codebooks: Array<PQCodebook>) {
          * @throws IOException in case of an I/O error
          */
         override fun deserialize(input: DataInput2, available: Int): PQ {
+            // todo: We now also need to serialize the type.. how is this done in the rest of cottontail?
             TODO()
 //            val numSubspaces = input.unpackInt()
 //            val numCentroids = input.unpackInt()
@@ -199,26 +222,24 @@ class PQ(val codebooks: Array<PQCodebook>) {
      * todo: this always copies! baaad
      */
     fun approximateAsymmetricIP(sigi: IntArray, v: VectorValue<*>): NumericValue<*> {
-//        require(v.size == numSubspaces * dimensionsPerSubspace)
-        var res = codebooks[0].centroids[sigi[0]].dot(v.get(0, dimensionsPerSubspace))
+        require(v.logicalSize == numSubspaces * dimensionsPerSubspace)
+        var res = codebooks[0].centroids[sigi[0]].dot(v, 0, 0, dimensionsPerSubspace)
         for (k in 1 until numSubspaces) {
             val centi = codebooks[k].centroids[sigi[k]]
-            res += centi.dot(v.get(k * dimensionsPerSubspace, dimensionsPerSubspace))
+            res += centi.dot(v, 0, k * dimensionsPerSubspace, dimensionsPerSubspace)
         }
         return res
     }
 
     /**
-     * Finds for each subspace the centroid with the largest inner product to the specified vector (needs
+     * Builds the signature, which is the representative centroid in each subspace for the specified vector (needs
      * to be permuted the same way that this [PQ] object was built!
-     * todo: no-copy...
      */
-    fun getSignature(v: DoubleArray): IntArray {
-        TODO()
-//        require(v.size == numSubspaces * dimensionsPerSubspace)
-//        return IntArray(numSubspaces) { k ->
-//            codebooks[k].quantizeVector(v, k * dimensionsPerSubspace, dimensionsPerSubspace)
-//        }
+    fun getSignature(v: VectorValue<*>): IntArray {
+        require(v.logicalSize == numSubspaces * dimensionsPerSubspace)
+        return IntArray(numSubspaces) { k ->
+            codebooks[k].quantizeVector(v, k * dimensionsPerSubspace, dimensionsPerSubspace)
+        }
     }
 
     fun precomputeCentroidQueryIP(permutedQuery: DoubleArray): PQCentroidQueryIP {
@@ -233,6 +254,25 @@ class PQ(val codebooks: Array<PQCodebook>) {
 //            }
 //        }
 //        )
+    }
+
+    fun precomputeCentroidQueryIPVectorValue(permutedQuery: VectorValue<*>): PQCentroidQueryIPVectorValue {
+        return PQCentroidQueryIPVectorValue(Array(numSubspaces) { k ->
+            when (permutedQuery) {
+                is RealVectorValue<*> -> {
+                    FloatVectorValue(FloatArray(numCentroids) { i ->
+                        permutedQuery.dot(codebooks[k].centroids[i], k * dimensionsPerSubspace, 0, dimensionsPerSubspace).value.toFloat()
+                    })
+                }
+                is ComplexVectorValue<*> -> {
+                    Complex32VectorValue(Array(numCentroids) { i ->
+                        permutedQuery.dot(codebooks[k].centroids[i], k * dimensionsPerSubspace, 0, dimensionsPerSubspace).asComplex32()
+                    })
+                }
+                else -> throw IllegalArgumentException("Unsupported type ${permutedQuery::class}")
+            }
+        }
+        )
     }
 
     fun precomputeCentroidQueryIPFloat(permutedQuery: DoubleArray): PQCentroidQueryIPFloat {

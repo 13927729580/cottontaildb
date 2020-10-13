@@ -42,7 +42,7 @@
     <appender-ref ref="vafile"/>
   </logger>
 
-  <logger name="org.vitrivr.cottontail.database.index.pq.KMeansClustererComplex">
+  <logger name="org.vitrivr.cottontail.database.index.pq.clustering.KMeansClustererComplex">
     <level value="TRACE" />
   </logger>
 

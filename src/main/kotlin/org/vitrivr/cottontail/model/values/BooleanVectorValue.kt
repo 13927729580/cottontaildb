@@ -137,4 +137,12 @@ inline class BooleanVectorValue(val value: BitSet) : VectorValue<Byte> {
     override fun get(start: Int, length: Int): VectorValue<Byte> {
         TODO("Not yet implemented")
     }
+
+    override fun minus(other: VectorValue<*>, start: Int, otherStart: Int, length: Int): VectorValue<Byte> {
+        TODO("Not yet implemented")
+    }
+
+    override fun dot(other: VectorValue<*>, start: Int, otherStart: Int, length: Int): NumericValue<*> {
+        TODO("Not yet implemented")
+    }
 }

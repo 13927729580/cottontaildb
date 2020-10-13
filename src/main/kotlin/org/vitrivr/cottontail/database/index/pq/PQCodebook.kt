@@ -1,6 +1,5 @@
 package org.vitrivr.cottontail.database.index.pq
 
-import org.apache.commons.math3.complex.Complex
 import org.apache.commons.math3.linear.*
 import org.apache.commons.math3.linear.MatrixUtils.*
 import org.apache.commons.math3.ml.clustering.CentroidCluster
@@ -9,174 +8,232 @@ import org.apache.commons.math3.ml.clustering.KMeansPlusPlusClusterer
 import org.apache.commons.math3.stat.correlation.Covariance
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import org.vitrivr.cottontail.database.index.pq.clustering.KMeansClustererComplex
 import org.vitrivr.cottontail.model.values.*
 import org.vitrivr.cottontail.model.values.types.ComplexValue
 import org.vitrivr.cottontail.model.values.types.ComplexVectorValue
 import org.vitrivr.cottontail.model.values.types.RealVectorValue
 import org.vitrivr.cottontail.model.values.types.VectorValue
-import java.lang.IllegalArgumentException
 import java.util.*
-import kotlin.reflect.KClass
+import kotlin.IllegalArgumentException
+import kotlin.math.absoluteValue
 
 /**
  * Class representing a codebook for a single subspace for Product Quantization
  * The codebook contains the centroids (real valued vectors) for the subspace
- *
+ * @property inverseDataCovarianceMatrix is the covariance matrix that was used for learning the codebook. Entries
+ * in the array are column-vectors of that matrix
  */
-class PQCodebook (val centroids: Array<out VectorValue<*>>, val inverseDataCovarianceMatrix: Array<out VectorValue<*>>) {
+class PQCodebook<T: VectorValue<*>> (val centroids: Array<T>, val inverseDataCovarianceMatrix: Array<T>) {
     companion object {
         private val LOGGER: Logger = LoggerFactory.getLogger(PQCodebook::class.java)
+
+        /**
+         * @param subspaceData entries in this array are subvectors of the data to index
+         */
+        fun learnFromRealData(subspaceData: Array<DoubleArray>, inverseDataCovMatrix: RealMatrix, numCentroids: Int, maxIterations: Int): Pair<PQCodebook<DoubleVectorValue>, IntArray> {
+            val (centroidClusters, signatures) = clusterRealData(subspaceData, inverseDataCovMatrix, numCentroids, maxIterations)
+            return PQCodebook(Array(numCentroids) {
+                DoubleVectorValue(centroidClusters[it].center.point)
+            }, inverseDataCovMatrix.data.map { DoubleVectorValue(it) }.toTypedArray()) to signatures
+        }
+
+        /**
+         * @param subspaceData entries in this array are subvectors of the data to index
+         */
+        fun learnFromRealData(subspaceData: Array<DoubleArray>, numCentroids: Int, maxIterations: Int): Pair<PQCodebook<DoubleVectorValue>, IntArray> {
+            val inverseDataCovMatrix = inverse(Covariance(subspaceData, false).covarianceMatrix)
+            return learnFromRealData(subspaceData, inverseDataCovMatrix, numCentroids, maxIterations)
+        }
+
         /**
          * Internally, for real valued data, the clustering is done with apache commons k-means++ in double precision
          * but the returned codebook contains centroids of the same datatype as was supplied
+         * @param subspaceData entries in this array are subvectors of the data to index
          */
-        fun learnFromData(subspaceData: Array<RealVectorValue<*>>, numCentroids: Int, maxIterations: Int): Pair<PQCodebook, IntArray> {
+        fun learnFromRealData(subspaceData: Array<out RealVectorValue<*>>, numCentroids: Int, maxIterations: Int): Pair<PQCodebook<out RealVectorValue<*>>, IntArray> {
             LOGGER.info("Calculating inverse data covariance matrix from supplied data.")
             require(subspaceData.all { it::class.java == subspaceData[0]::class.java })
-            val (castSubspaceData, inverseDataCovMatrix) =
-                    when(subspaceData[0]) {
-                        is DoubleVectorValue -> {
-                            val array = Array(subspaceData.size) {
-                                (subspaceData[it] as DoubleVectorValue).data
-                            }
-                            array to inverse(Covariance(array, false).covarianceMatrix)
-                        }
-                        is FloatVectorValue -> {
-                            val array = Array(subspaceData.size) {
-                                (subspaceData[it] as FloatVectorValue).data.map { j -> j.toDouble() }.toDoubleArray()
-                            }
-                            array to inverse(Covariance(array, false).covarianceMatrix)
-                        }
-                        else -> {
-                            TODO("Other types not yet implemented for PQ")
-                        }
+            return when(subspaceData[0]) {
+                is DoubleVectorValue -> {
+                    val data = Array(subspaceData.size) {
+                        (subspaceData[it] as DoubleVectorValue).data
                     }
-            return learnFromData(castSubspaceData, inverseDataCovMatrix, numCentroids, maxIterations, subspaceData[0].javaClass)
-        }
-
-        fun learnFromData(subspaceData: Array<DoubleArray>, numCentroids: Int, maxIterations: Int): Pair<PQCodebook, IntArray> {
-            val inverseDataCovMatrix = inverse(Covariance(subspaceData, false).covarianceMatrix)
-            return learnFromData(subspaceData, inverseDataCovMatrix, numCentroids, maxIterations, DoubleVectorValue::class.java)
-        }
-
-        fun learnFromData(subspaceData: Array<DoubleArray>, inverseDataCovMatrix: RealMatrix, numCentroids: Int, maxIterations: Int): Pair<PQCodebook, IntArray> {
-            return learnFromData(subspaceData, inverseDataCovMatrix, numCentroids, maxIterations, DoubleVectorValue::class.java)
-        }
-
-        fun learnFromData(subspaceData: Array<DoubleArray>, inverseDataCovMatrix: RealMatrix, numCentroids: Int, maxIterations: Int, type: Class<*>): Pair<PQCodebook, IntArray> {
-            val (signatures, centroidClusters) = clusterData(subspaceData, numCentroids, maxIterations, inverseDataCovMatrix)
-            LOGGER.info("Building codebook and signatures from commons math result")
-            val (learnedCentroids, castInvDataCovMatrix) =
-                when(type) {
-                     DoubleVectorValue::class.java -> {
-                         Pair(Array(numCentroids) {
-                             DoubleVectorValue(centroidClusters[it].center.point)
-                         }, inverseDataCovMatrix.data.map { DoubleVectorValue(it) }.toTypedArray())
-                    }
-                    FloatVectorValue::class.java -> {
-                        Pair(Array(numCentroids) {
-                            FloatVectorValue(centroidClusters[it].center.point.map { v -> v.toFloat() }.toFloatArray())
-                        }, inverseDataCovMatrix.data.map { FloatVectorValue(it.map { v -> v.toFloat() }.toFloatArray()) }.toTypedArray())
-                    }
-                    else -> throw IllegalArgumentException("Unsupported type ${type}")
+                    learnFromRealData(data, numCentroids, maxIterations)
                 }
-            centroidClusters.forEachIndexed { i, cluster ->
-                cluster.points.forEach {
-                    signatures[it.index] = i
+                is FloatVectorValue -> {
+                    val array = Array(subspaceData.size) {
+                        (subspaceData[it] as FloatVectorValue).data.map { j -> j.toDouble() }.toDoubleArray()
+                    }
+                    val inverseDataCovMatrix = inverse(Covariance(array, false).covarianceMatrix)
+                    val (centroidClusters, signatures) = clusterRealData(array, inverseDataCovMatrix, numCentroids, maxIterations)
+                    PQCodebook(Array(numCentroids) {
+                        FloatVectorValue(centroidClusters[it].center.point.map { v ->
+                            v.toFloat()
+                        }.toFloatArray())
+                    }, inverseDataCovMatrix.data.map {
+                        FloatVectorValue(it.map {
+                            v -> v.toFloat()
+                        }.toFloatArray()) }.toTypedArray()) to signatures
                 }
+                else -> throw IllegalArgumentException("Other RealVectorValue types not implemented for PQ")
             }
-            return PQCodebook(learnedCentroids, castInvDataCovMatrix) to signatures
         }
 
-        private fun clusterData(subspaceData: Array<DoubleArray>, numCentroids: Int, maxIterations: Int, inverseDataCovMatrix: RealMatrix): Pair<IntArray, MutableList<CentroidCluster<Vector>>> {
-            val signatures = IntArray(subspaceData.size)
-            // kmeans clusterer with mahalanobis distance
+        private fun clusterRealData(subspaceData: Array<DoubleArray>, inverseDataCovMatrix: RealMatrix, numCentroids: Int, maxIterations: Int): Pair<MutableList<CentroidCluster<Vector>>, IntArray> {
             val clusterer = KMeansPlusPlusClusterer<Vector>(numCentroids, maxIterations) { a, b ->
-                mahalanobisSqOpt(a, 0, a.size, b, 0, b.size, inverseDataCovMatrix)
+                mahalanobisSqOpt(a, 0, a.size, b, 0, inverseDataCovMatrix)
             }
             LOGGER.info("Learning...")
             val centroidClusters = clusterer.cluster(subspaceData.mapIndexed { i, value ->
                 Vector(value, i)
             })
             LOGGER.info("Done learning.")
-            return Pair(signatures, centroidClusters)
+            LOGGER.info("Building codebook and signatures from commons math result")
+            val signatures = IntArray(subspaceData.size)
+            centroidClusters.forEachIndexed { i, cluster ->
+                cluster.points.forEach {
+                    signatures[it.index] = i
+                }
+            }
+            return centroidClusters to signatures
         }
 
-        /** todo: make learning work with complex data...
-        *         apache commons clustering doesn't work with complex out of box, so need to probably roll our own...
+        /** todo: apache commons clustering doesn't work with complex out of box, so need to probably roll our own...
         *         we could re-interpret the doubles in complex way for distance calculation which would enable
         *         us to use the commons clusterer
         */
-        fun learnFromData(subspaceData: Array<out ComplexVectorValue<out Number>>, numCentroids: Int, maxIterations: Int): Pair<PQCodebook, IntArray> {
+        fun learnFromComplexData(subspaceData: Array<out ComplexVectorValue<out Number>>, numCentroids: Int, maxIterations: Int): Pair<PQCodebook<out ComplexVectorValue<*>>, IntArray> {
             val cov = complexCovarianceMatrix(subspaceData)
             val inverseDataCovMatrixCommons = invertComplexMatrix(cov)
             val inverseDataCovMatrix = fieldMatrixToVectorArray(inverseDataCovMatrixCommons, subspaceData[0]::class)
-            val c = KMeansClustererComplex<ComplexVectorValue<*>>(subspaceData, SplittableRandom(1234L)) { a, b ->
-                mahalanobisSqOpt(a, 0, a.logicalSize, b, 0, b.logicalSize, inverseDataCovMatrix)
+//            val (signatures, centroids) = clusterComplexData(numCentroids, inverseDataCovMatrix, subspaceData, maxIterations)
+            val (signatures, centroids) = clusterComplexDataPlusPlus(numCentroids, inverseDataCovMatrix, subspaceData, maxIterations)
+            return when (subspaceData[0]) {
+                is Complex32VectorValue -> {
+                    PQCodebook(centroids.map{ it as Complex32VectorValue}.toTypedArray(), inverseDataCovMatrix.map{ it as Complex32VectorValue}.toTypedArray()) to signatures
+                }
+                is Complex64VectorValue -> {
+                    PQCodebook(centroids.map { it as Complex64VectorValue }.toTypedArray(), inverseDataCovMatrix.map { it as Complex64VectorValue }.toTypedArray()) to signatures
+                }
+                else -> error("Unsupported type ${subspaceData[0]::class}")
             }
-            val clusterResults = c.cluster(numCentroids, maxIterations)
+        }
+
+        /**
+         * @param inverseDataCovMatrix is an array of column-vectors of the non-centered data covariance matrix
+         */
+        private fun clusterComplexData(numCentroids: Int, inverseDataCovMatrix: Array<out ComplexVectorValue<*>>, subspaceData: Array<out ComplexVectorValue<out Number>>, maxIterations: Int): Pair<IntArray, Array<out ComplexVectorValue<*>>> {
+            val c = KMeansClustererComplex<ComplexVectorValue<*>>(numCentroids, SplittableRandom(1234L)) { a, b ->
+                mahalanobisSqOpt(a, 0, a.logicalSize, b, 0, inverseDataCovMatrix)
+            }
+            val clusterResults = c.cluster(subspaceData, maxIterations)
             val signatures = IntArray(subspaceData.size)
             val centroids = clusterResults.mapIndexed { i, clusterCenter ->
                 clusterCenter.clusterPointIndices.forEach { clusterPointIndex ->
-                        signatures[clusterPointIndex] = i
-                    }
+                    signatures[clusterPointIndex] = i
+                }
                 clusterCenter.center
             }.toTypedArray()
-            return PQCodebook(centroids, inverseDataCovMatrix.map { it }.toTypedArray()) to signatures
+            return Pair(signatures, centroids)
         }
 
         /**
-         * todo: I'm sure this when construct can be made prettier instead of explicit type checking. Of course also applies to code above
+         * @param inverseDataCovMatrix is an array of column-vectors of the non-centered data covariance matrix
          */
-        private fun fieldMatrixToVectorArray(matrixCommons: FieldMatrix<Complex>, type: KClass<out ComplexVectorValue<*>>): Array<ComplexVectorValue<*>> {
-            return Array(matrixCommons.data.size) { i ->
-                when (type) {
-                    Complex32VectorValue::class -> {
-                        Complex32VectorValue(matrixCommons.data[i].map { Complex32Value(it.real.toFloat(), it.imaginary.toFloat()) }.toTypedArray())
-                    }
-                    Complex64VectorValue::class -> {
-                        Complex32VectorValue(matrixCommons.data[i].map { Complex64Value(it.real, it.imaginary) }.toTypedArray())
-                    }
-                    else -> {
-                        error("Unsupported type $type")
-                    }
+        private fun clusterComplexDataPlusPlus(numCentroids: Int, inverseDataCovMatrix: Array<out ComplexVectorValue<*>>, subspaceData: Array<out ComplexVectorValue<*>>, maxIterations: Int): Pair<IntArray, Array<out ComplexVectorValue<*>>> {
+            // to decouple from the implementation of [Complex64VectorValue] or [Complex32VectorValue] we need copy the
+            // data to a DoubleArray with a layout that we decide...
+            val subspaceDataDoubles = subspaceData.map { v ->
+                DoubleArray(v.logicalSize shl 1) { i ->
+                    if (i % 2 == 0) v[i / 2].real.value.toDouble() else v[i / 2].imaginary.value.toDouble()
+                }
+            }.toTypedArray()
+            // do same for matrix. But it will be more efficient later on if we have it as row vectors
+//            val inverseDataCovMatrixDoubles = inverseDataCovMatrix.map { v ->
+//                DoubleArray(v.logicalSize shl 1) { i ->
+//                    if (i % 2 == 0) v[i / 2].real.value.toDouble() else v[i / 2].imaginary.value.toDouble()
+//                }
+//            }.toTypedArray()
+            val inverseDataCovMatrixRowVectors = Array(inverseDataCovMatrix[0].logicalSize) { row ->
+                DoubleArray(inverseDataCovMatrix.size shl 1) { colComponent ->
+                    if (colComponent % 2 == 0) inverseDataCovMatrix[colComponent / 2][row].real.value.toDouble() else inverseDataCovMatrix[colComponent / 2][row].imaginary.value.toDouble()
                 }
             }
-        }
-
-        private fun invertComplexMatrix(matrix: FieldMatrix<Complex>): FieldMatrix<Complex> {
-            val lud = FieldLUDecomposition<Complex>(matrix)
-            return lud.solver.inverse
-        }
-
-        /**
-         * estimate cov matrix in real case via Q_XX = M_X * M_X^T
-         * we estimate cov matrix in complex case as Q_XX = 1/n * M_X * M_X^H where ()^H means conjugate transpose
-         */
-        private fun complexCovarianceMatrix(data: Array<out ComplexVectorValue<*>>): FieldMatrix<Complex> {
-            val fieldDataMatrix = BlockFieldMatrix<Complex>(Array(data[0].logicalSize) { row ->
-                Array(data.size) { col ->
-                    Complex(data[col][row].real.value.toDouble(), data[col][row].imaginary.value.toDouble())
+            val dist: (a: DoubleArray, b: DoubleArray) -> Double = { a, b ->
+                require(a.size == b.size)
+                // d = (a-b)^T*cov^(-1)*(a-b)
+                // or is it d = (a-b)^H*cov^(-1)*(a-b)??
+                val diff = DoubleArray(a.size) {
+                    a[it] - b[it]
                 }
-            })
-            val fieldDataMatrixH = fieldDataMatrix.transpose()
-            fieldDataMatrixH.walkInOptimizedOrder(object : FieldMatrixChangingVisitor<Complex> {
-                override fun end() : Complex {return Complex.ZERO}
-                override fun start(rows: Int, columns: Int, startRow: Int, endRow: Int, startColumn: Int, endColumn: Int) { return }
-                override fun visit(row: Int, column: Int, value: Complex) = value.conjugate()
-            })
-            return fieldDataMatrix.multiply(fieldDataMatrixH).scalarMultiply(Complex(1.0 / data.size.toDouble(), 0.0))
+                var dReal = 0.0
+                var dImag = 0.0
+                for (mRow in inverseDataCovMatrixRowVectors.indices) {
+                    var hReal = 0.0
+                    var hImag = 0.0
+                    for(vCol in 0 until diff.size / 2) { // iterate vector components (1/2 because each component is 2 elements (real + imag)
+                        // now do basically complex version of what's happening in mahalanobisSqOpt()
+//                        hReal += inverseDataCovMatrixRowVectors[mRow][vCol * 2] * diff[vCol * 2] - inverseDataCovMatrixRowVectors[mRow][vCol * 2 + 1] * diff[vCol * 2 + 1] // case without conjugation
+//                        hImag += inverseDataCovMatrixRowVectors[mRow][vCol * 2 + 1] * diff[vCol * 2] + inverseDataCovMatrixRowVectors[mRow][vCol * 2] * diff[vCol * 2 + 1]
+                        hReal += inverseDataCovMatrixRowVectors[mRow][vCol * 2] * diff[vCol * 2] + inverseDataCovMatrixRowVectors[mRow][vCol * 2 + 1] * diff[vCol * 2 + 1] // case with conjugation. Without it, dist is not real! todo: figure
+                        hImag += inverseDataCovMatrixRowVectors[mRow][vCol * 2 + 1] * diff[vCol * 2] - inverseDataCovMatrixRowVectors[mRow][vCol * 2] * diff[vCol * 2 + 1]
+                    }
+                    dReal += diff[mRow * 2] * hReal - diff[mRow * 2 + 1] * hImag
+                    dImag += diff[mRow * 2 + 1] * hReal + diff[mRow * 2] * hImag // todo: once we're confident, we can drop this...
+                }
+                check(dImag.absoluteValue < 1e-5) {"Distance should be real but imaginary part was $dImag"}
+                check(dReal >= 0) {"Distance must be >= 0 but was $dReal"}
+                dReal
+            }
+            val distAbsIP: (a: DoubleArray, b: DoubleArray) -> Double = { a, b ->
+                //make a distance that returns 1 - abs(a.dot(b)) (a, b are normalized)
+                val a_ = Complex64VectorValue(Array(a.size / 2) {
+                    Complex64Value(a[it * 2], a[it * 2 + 1])
+                })
+                val b_ = Complex64VectorValue(Array(b.size / 2) {
+                    Complex64Value(b[it * 2], b[it * 2 + 1])
+                })
+                val d = 1.0 - a_.dot(b_).abs().value
+                check(d >= -1e-5) {"Distance must be >= 0 but was $d"}
+                d.coerceAtLeast(0.0)
+            }
+            val c = KMeansPlusPlusClusterer<Vector>(numCentroids, maxIterations, dist)
+//            val c = KMeansPlusPlusClusterer<Vector>(numCentroids, maxIterations, distAbsIP) // this guy doesn't converge...
+            val clusterResults = c.cluster(subspaceDataDoubles.mapIndexed { i, v -> Vector(v, i) })
+            val signatures = IntArray(subspaceData.size)
+            clusterResults.forEachIndexed { i, clusterCenter ->
+                clusterCenter.points.forEach { v ->
+                    signatures[v.index] = i
+                }
+            }
+            val centers = when(subspaceData[0]) {
+                is Complex32VectorValue -> {
+                    clusterResults.map { cCenter ->
+                        Complex32VectorValue(Array (cCenter.center.point.size / 2) {
+                            Complex32Value(cCenter.center.point[it * 2], cCenter.center.point[it * 2 + 1])
+                            }
+                        )
+                    }.toTypedArray()
+                }
+                is Complex64VectorValue -> {
+                    clusterResults.map { cCenter ->
+                        Complex64VectorValue(Array (cCenter.center.point.size / 2) {
+                            Complex64Value(cCenter.center.point[it * 2], cCenter.center.point[it * 2 + 1])
+                            }
+                        )
+                    }.toTypedArray()
+                }
+                else -> throw IllegalArgumentException("Unsupported type ${subspaceData[0]::class}")
+            }
+            return signatures to centers
         }
 
-        /**
-         * todo: only use a single length parameter, 2 make no sense...
-         */
-        inline fun mahalanobisSqOpt(a: DoubleArray, aStart: Int, aLength: Int, b: DoubleArray, bStart: Int, bLength: Int, inverseDataCovMatrix: RealMatrix): Double {
-            require(aLength == bLength)
-            require(inverseDataCovMatrix.columnDimension == aLength)
-            require(inverseDataCovMatrix.rowDimension == aLength)
+        inline fun mahalanobisSqOpt(a: DoubleArray, aStart: Int, length: Int, b: DoubleArray, bStart: Int, inverseDataCovMatrix: RealMatrix): Double {
+            require(inverseDataCovMatrix.columnDimension == length)
+            require(inverseDataCovMatrix.rowDimension == length)
             var dist = 0.0
-            val diff = DoubleArray(aLength) {
+            val diff = DoubleArray(length) {
                 a[aStart + it] - b[bStart + it]
             }
             for (i in 0 until inverseDataCovMatrix.columnDimension) {
@@ -190,26 +247,22 @@ class PQCodebook (val centroids: Array<out VectorValue<*>>, val inverseDataCovar
         }
 
         /**
-         * todo: only use a single length parameter, 2 make no sense...
+         * todo: check efficiency of this. It will probably be used A LOT
+         *       is this correct for complex case? dot includes a conjugate. Normal matrix multiplication not
+         * @param inverseDataCovMatrix is a collection of column-vectors
          */
-        inline fun mahalanobisSqOpt(a: VectorValue<*>, aStart: Int, aLength: Int, b: VectorValue<*>, bStart: Int, bLength: Int, inverseDataCovMatrix: Array<out VectorValue<*>>): Double {
-            require(aLength == bLength)
-            require(inverseDataCovMatrix.size == aLength)
-            require(inverseDataCovMatrix[0].logicalSize == aLength)
+        inline fun mahalanobisSqOpt(a: VectorValue<*>, aStart: Int, length: Int, b: VectorValue<*>, bStart: Int, inverseDataCovMatrix: Array<out VectorValue<*>>): Double {
+            require(inverseDataCovMatrix.size == length)
+            require(inverseDataCovMatrix[0].logicalSize == length)
             var dist: ComplexValue<*> = when (val t = a::class.java) {
                 Complex32VectorValue::class.java -> Complex32Value.ZERO
                 Complex64VectorValue::class.java -> Complex64Value.ZERO
                 else -> error("Unknown type $t")
             }
 
-            val diff = if (aLength != a.logicalSize || bLength != b.logicalSize) {
-                (a.get(aStart, aLength) - b.get(bStart, bLength))
-            }
-            else {
-                (a - b)
-            }
+            val diff = a.minus(b, aStart, bStart, length)
             for (i in inverseDataCovMatrix.indices) {
-                val ip = inverseDataCovMatrix[i].dot(diff)
+                val ip = inverseDataCovMatrix[i].dot(diff) // todo: should we use dot here (because of conj)?
                 val v = diff[i] * ip
                 dist += v
             }
@@ -250,11 +303,11 @@ class PQCodebook (val centroids: Array<out VectorValue<*>>, val inverseDataCovar
      * mahalanobis distance
      */
     private fun smallestMahalanobis(v: VectorValue<*>, start: Int, length: Int): Int {
-        require(v.logicalSize == centroids[0].logicalSize)
+        require(length == centroids[0].logicalSize)
         var mahIndex = 0
         var mah = Double.POSITIVE_INFINITY
         centroids.forEachIndexed { i, c ->
-            val m = mahalanobisSqOpt(c, 0, c.logicalSize, v, start, length, inverseDataCovarianceMatrix)
+            val m = mahalanobisSqOpt(c, 0, length, v, start, inverseDataCovarianceMatrix)
             if (m < mah) {
                 mah = m
                 mahIndex = i
@@ -264,6 +317,35 @@ class PQCodebook (val centroids: Array<out VectorValue<*>>, val inverseDataCovar
 
     }
 
+    /**
+     * returns a list of lists of strings. First element is header of data as list of strings,
+     * following elements are the centroid data
+     */
+    fun centroidsToString(): List<List<String>> {
+        return when (val firstC = centroids[0]) {
+            is RealVectorValue<*> -> {
+                val header = listOf("Index") + firstC.indices.map { "component$it" }
+                val data = centroids.mapIndexed { i, c ->
+                    listOf("$i") + (c as RealVectorValue<*>).map { it.value.toDouble().toString() }
+                }
+                check(header.size == data[0].size)
+                listOf(header) + data
+            }
+            is ComplexVectorValue<*> -> {
+                val header = listOf("Index") + firstC.indices.flatMap { listOf("component${it}Real", "component${it}Imag") }
+                val data = centroids.mapIndexed { i, c ->
+                    listOf("$i") + (c as ComplexVectorValue<*>).flatMap { component ->
+                        listOf(component.real, component.imaginary).map { it.value.toDouble().toString() }
+                    }
+                }
+                check(header.size == data[0].size)
+                listOf(header) + data
+            }
+            else -> {
+                error("unexpected type ${firstC::class}")
+            }
+        }
+    }
 }
 
 private class Vector(val data: DoubleArray, val index: Int): Clusterable {

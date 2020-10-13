@@ -34,41 +34,43 @@ internal class PQTest {
         val realQData = getRealPart(queryData)
         val imagDbData = getImagPart(dbData)
         val imagQData = getImagPart(queryData)
-        val numSubspaces = 4
-        val numCentroids = 32
+        val numSubspaces = 5
+        val numCentroids = 128
         val seed = 1234L
         val rng = SplittableRandom(seed)
-        val (permutation, reversePermutation) = PQIndex.generateRandomPermutation(realDbData[0].size, rng)
-        val permutedRealDbData = permuteData(realDbData, permutation)
-        val permutedRealQData = permuteData(realQData, permutation)
-        val permutedImagDbData = permuteData(imagDbData, permutation)
-        val permutedImagQData = permuteData(imagQData, permutation)
+        val permute = false
+        val outFileDir = File("testOut/pqReal/nss${numSubspaces}nc${numCentroids}seed${seed}Phasesum0WithoutQDataPermuted${permute}/")
+        outFileDir.mkdirs()
+        val (pqRealTimedDataLearned, pqImagTimedDataLearned) = if (permute) {
+            val (permutation, reversePermutation) = PQIndex.generateRandomPermutation(realDbData[0].size, rng)
+            csvWriter().open(File(outFileDir, "permutation.csv")) {
+                writeRow(reversePermutation.map { it.toString() })
+            }
+            val permutedRealDbData = permuteData(realDbData, permutation)
+            val permutedRealQData = permuteData(realQData, permutation)
+            val permutedImagDbData = permuteData(imagDbData, permutation)
+            val permutedImagQData = permuteData(imagQData, permutation)
 //        val pqRealTimed = measureTimedValue { PQ.fromPermutedData(numSubspaces, numCentroids, permutedRealDbData, permutedRealQData) }
-        val pqRealTimed = measureTimedValue { PQ.fromPermutedData(numSubspaces, numCentroids, permutedRealDbData, null) }
+            val pqRealTimed = measureTimedValue { PQ.fromPermutedData(numSubspaces, numCentroids, permutedRealDbData, null) }
 //        val pqImagTimed = measureTimedValue { PQ.fromPermutedData(numSubspaces, numCentroids, permutedImagDbData, permutedImagQData) }
-        val pqImagTimed = measureTimedValue { PQ.fromPermutedData(numSubspaces, numCentroids, permutedImagDbData, null) }
+            val pqImagTimed = measureTimedValue { PQ.fromPermutedData(numSubspaces, numCentroids, permutedImagDbData, null) }
+            Triple(pqRealTimed, permutedRealDbData, permutedRealQData) to Triple(pqImagTimed, permutedImagDbData, permutedImagQData)
+        }
+        else {
+            File(outFileDir, "permutation.csv").writeText("not permuted")
+            val pqRealTimed = measureTimedValue { PQ.fromPermutedData(numSubspaces, numCentroids, realDbData, null) }
+            val pqImagTimed = measureTimedValue { PQ.fromPermutedData(numSubspaces, numCentroids, imagDbData, null) }
+            Triple(pqRealTimed, realDbData, realQData) to Triple(pqImagTimed, imagDbData, imagQData)
+        }
+        val (pqRealTimed, realDataLearned, realQDataLearned) = pqRealTimedDataLearned
+        val (pqImagTimed, imagDataLearned, imagQDataLearned) = pqImagTimedDataLearned
         val pqReal = pqRealTimed.value
         val pqImag = pqImagTimed.value
-        val outFileDir = File("testOut/pq/nss${numSubspaces}nc${numCentroids}seed${seed}WithoutQData/")
-        outFileDir.mkdirs()
         File(outFileDir, "learning_time_real_ms.txt").writeText(pqRealTimed.duration.inMilliseconds.toString())
         File(outFileDir, "learning_time_imag_ms.txt").writeText(pqImagTimed.duration.inMilliseconds.toString())
-        csvWriter().open(File(outFileDir, "permutation.csv")) {
-            writeRow(reversePermutation.map { it.toString() })
-        }
 //        dumpCovarianceMatrixes(numSubspaces, outFileDir, pqReal, pqImag)
-        csvWriter().open(File(outFileDir, "dataSignaturesReal.csv")) {
-            writeRow((1..numSubspaces).map{ "subspace${it}CentroidNumber"})
-            pqReal.second.forEach {
-                writeRow(it.map { i -> i.toString()})
-            }
-        }
-        csvWriter().open(File(outFileDir, "dataSignaturesImag.csv")) {
-            writeRow((1..numSubspaces).map{ "subspace${it}CentroidNumber"})
-            pqImag.second.forEach {
-                writeRow(it.map { i -> i.toString()})
-            }
-        }
+        dumpSignatures(pqReal.second, numSubspaces, File(outFileDir, "dataSignaturesReal.csv"))
+        dumpSignatures(pqImag.second, numSubspaces, File(outFileDir, "dataSignatureslImag.csv"))
         println("Calculating MSE of IP approximations")
         var MSERealReal = 0.0
         var MSERealRealQ = 0.0
@@ -120,14 +122,14 @@ internal class PQTest {
                     val exactImagRealQ = vImagDbData[i].dot(vRealQData[jQ]).value
                     val exactRealImag = vRealDbData[i].dot(vImagDbData[j]).value
                     val exactRealImagQ = vRealDbData[i].dot(vImagQData[jQ]).value
-                    val approxRealReal = pqReal.first.approximateAsymmetricIP(pqReal.second[i], permutedRealDbData[j])
-                    val approxRealRealQ = pqReal.first.approximateAsymmetricIP(pqReal.second[i], permutedRealQData[jQ])
-                    val approxImagImag = pqImag.first.approximateAsymmetricIP(pqImag.second[i], permutedImagDbData[j])
-                    val approxImagImagQ = pqImag.first.approximateAsymmetricIP(pqImag.second[i], permutedImagQData[jQ])
-                    val approxImagReal = pqImag.first.approximateAsymmetricIP(pqImag.second[i], permutedRealDbData[j])
-                    val approxImagRealQ = pqImag.first.approximateAsymmetricIP(pqImag.second[i], permutedRealQData[jQ])
-                    val approxRealImag = pqReal.first.approximateAsymmetricIP(pqReal.second[i], permutedImagDbData[j])
-                    val approxRealImagQ = pqReal.first.approximateAsymmetricIP(pqReal.second[i], permutedImagQData[jQ])
+                    val approxRealReal = pqReal.first.approximateAsymmetricIP(pqReal.second[i], realDataLearned[j])
+                    val approxRealRealQ = pqReal.first.approximateAsymmetricIP(pqReal.second[i], realQDataLearned[jQ])
+                    val approxImagImag = pqImag.first.approximateAsymmetricIP(pqImag.second[i], imagDataLearned[j])
+                    val approxImagImagQ = pqImag.first.approximateAsymmetricIP(pqImag.second[i], imagQDataLearned[jQ])
+                    val approxImagReal = pqImag.first.approximateAsymmetricIP(pqImag.second[i], realDataLearned[j])
+                    val approxImagRealQ = pqImag.first.approximateAsymmetricIP(pqImag.second[i], realQDataLearned[jQ])
+                    val approxRealImag = pqReal.first.approximateAsymmetricIP(pqReal.second[i], imagDataLearned[j])
+                    val approxRealImagQ = pqReal.first.approximateAsymmetricIP(pqReal.second[i], imagQDataLearned[jQ])
                     val approxAbsIP = ((approxRealReal + approxImagImag).pow(2) + (approxImagReal - approxRealImag).pow(2)).pow(0.5)
                     val approxAbsIPQ = ((approxRealRealQ + approxImagImagQ).pow(2) + (approxImagRealQ - approxRealImagQ).pow(2)).pow(0.5)
                     val exactIP = dbData[i].dot(dbData[j])
@@ -171,7 +173,23 @@ internal class PQTest {
         println("MSERealImagQ = $MSERealImagQ")
         File(outFileDir, "MSE.txt").writeText("n: $numPairs\nMSEAsymmetric: $MSEAbs\nMSERealReal: $MSERealReal\nMSEImagImag: $MSEImagImag\nMSEImagReal: $MSEImagReal\nMSERealImag: $MSERealImag")
         File(outFileDir, "MSEQ.txt").writeText("n: $numPairs\nMSEAsymmetric: $MSEAbsQ\nMSERealReal: $MSERealRealQ\nMSEImagImag: $MSEImagImagQ\nMSEImagReal: $MSEImagRealQ\nMSERealImag: $MSERealImagQ")
+        val uniqueSignatures = HashSet<List<Int>>()
+        var numDuplicates = 0
+        (pqReal.second zip pqImag.second).forEach { (sigReal, sigImag) ->
+            if (!uniqueSignatures.add(sigReal.toList() + sigImag.toList())) numDuplicates++
+        }
+        println("NumDuplicates = $numDuplicates")
+        File(outFileDir, "numDuplicates.txt").writeText("$numDuplicates, ${numDuplicates.toDouble() * 100.0 / pqReal.second.size.toDouble()} %")
         vectorsFile.copyTo(File(outFileDir, vectorsFile.name), overwrite = true)
+    }
+
+    private fun dumpSignatures(signatures: Array<IntArray>, numSubspaces: Int, file: File) {
+        csvWriter().open(file) {
+            writeRow((1..numSubspaces).map { "subspace${it}CentroidNumber" })
+            signatures.forEach {
+                writeRow(it.map { i -> i.toString() })
+            }
+        }
     }
 
     private fun dumpCovarianceMatrixes(numSubspaces: Int, outFileDir: File, pqReal: Pair<PQ, Array<IntArray>>, pqImag: Pair<PQ, Array<IntArray>>) {
@@ -239,25 +257,33 @@ internal class PQTest {
         }
         val dbData = getComplexVectorsFromFile(vectorsFile.toString(), 1, 20)
 
-        val numSubspaces = 4
-        val numCentroids = 32
+        val permute = true
+        val numSubspaces = 20
+        val numCentroids = 64
         val seed = 1234L
-        val outFileDir = File("testOut/pqComplex/nss${numSubspaces}nc${numCentroids}seed${seed}Phasesum0WithoutQData/")
+        val outFileDir = File("testOut/pqComplex_refactoredPlusPlus/nss${numSubspaces}nc${numCentroids}seed${seed}Phasesum0WithoutQDataPermute${permute}/")
         outFileDir.mkdirs()
         val rng = SplittableRandom(seed)
-        val (permutation, reversePermutation) = PQIndex.generateRandomPermutation(dbData[0].logicalSize, rng)
-        val permutedDbData = dbData.map { v ->
-            Complex64VectorValue(v.indices.map { i ->
-                v[permutation[i]]
-            }.toTypedArray())
-        }.toTypedArray()
-        val pq = PQ.fromPermutedData(numSubspaces, numCentroids, permutedDbData)
+        val (pq , dataLearned) = if (permute) {
+            val (permutation, reversePermutation) = PQIndex.generateRandomPermutation(dbData[0].logicalSize, rng)
+            val permutedDbData = dbData.map { v ->
+                Complex64VectorValue(v.indices.map { i ->
+                    v[permutation[i]]
+                }.toTypedArray())
+            }.toTypedArray()
+            PQ.fromPermutedData(numSubspaces, numCentroids, permutedDbData) to permutedDbData
+        } else {
+            PQ.fromPermutedData(numSubspaces, numCentroids, dbData) to dbData
+        }
         val numPairs = 100000
         val header = listOf("i", "j",
                 "ipRealExact", "ipImagExact",
                 "ipRealApprox", "ipImagApprox",
                 "absIPExact", "absIPApprox")
         println(header.joinToString())
+        var mseAbs = 0.0
+        var mseReal = 0.0
+        var mseImag = 0.0
         csvWriter().open(File(outFileDir, "IPs.csv")) {
             writeRow(header)
             for (n in 0 until numPairs) {
@@ -270,17 +296,47 @@ internal class PQTest {
                 val ipRealEx = ipExact.real.value
                 val ipImagEx = ipExact.imaginary.value
                 val absIPExact = ipExact.abs().real.value
-                val ipApprox = pq.first.approximateAsymmetricIP(sigi, permutedDbData[j])
-                val ipRealApp = ipApprox.real.value
-                val ipImagApp = ipApprox.imaginary.value
-                val absIPApprox = ipApprox.abs().real.value
+                val ipApprox = pq.first.approximateAsymmetricIP(sigi, dataLearned[j])
+                val ipRealApp = ipApprox.real.value.toDouble()
+                val ipImagApp = ipApprox.imaginary.value.toDouble()
+                val absIPApprox = ipApprox.abs().real.value.toDouble()
+                mseAbs += (absIPApprox - absIPExact).pow(2)
+                mseReal += (ipRealApp - ipRealEx).pow(2)
+                mseImag += (ipImagApp - ipImagEx).pow(2)
                 val data = listOf(i.toString(), j.toString(),
                         ipRealEx.toString(), ipImagEx.toString(),
                         ipRealApp.toString(), ipImagApp.toString(),
                         absIPExact.toString(), absIPApprox.toString())
-                if (n % 100 == 0) println(data.joinToString())
                 writeRow(data)
             }
         }
+        pq.first.codebooks.forEachIndexed { i, pqCodebook ->
+            csvWriter().open(File(outFileDir, "centroids${i}.csv")) {
+                writeRows(pqCodebook.centroidsToString())
+            }
+        }
+        dumpSignatures(pq.second, numSubspaces, File(outFileDir, "signatures.csv"))
+        mseAbs /= numPairs
+        mseReal /= numPairs
+        mseImag /= numPairs
+
+        val mseHeader = listOf("mseAbs", "mseReal", "mseImag")
+        val mseData = listOf(mseAbs, mseReal, mseImag)
+        csvWriter().open(File(outFileDir, "MSE.csv")) {
+            writeRow(mseHeader)
+            writeRow(mseData)
+        }
+        println(mseHeader)
+        println(mseData)
+        vectorsFile.copyTo(File(outFileDir, vectorsFile.name), overwrite = true)
+
+        val uniqueSignatures = HashSet<List<Int>>()
+        var numDuplicates = 0
+        pq.second.forEach { sig ->
+            if (!uniqueSignatures.add(sig.toList())) numDuplicates++
+        }
+        File(outFileDir, "numDuplicates.txt").writeText("$numDuplicates, ${numDuplicates.toDouble() * 100.0 / pq.second.size.toDouble()} %")
+
+        // todo: silhouette analysis (maybe in python)
     }
 }

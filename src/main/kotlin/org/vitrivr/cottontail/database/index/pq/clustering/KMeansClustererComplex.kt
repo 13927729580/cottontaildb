@@ -1,4 +1,4 @@
-package org.vitrivr.cottontail.database.index.pq
+package org.vitrivr.cottontail.database.index.pq.clustering
 
 import org.slf4j.LoggerFactory
 import org.vitrivr.cottontail.model.values.DoubleValue
@@ -8,11 +8,8 @@ import java.util.*
 /**
  * A class that does KMeans clustering on complex Vectors
  * @author: Gabriel Zihlmann, 3.10.2020
- * todo: Could the commons math clusterer be used? We can change the Distance function such that
- *       it would be interpreted in a complex sense. The mean calculation for cluster centers doesn't
- *       even need adaption...
  */
-class KMeansClustererComplex<T: ComplexVectorValue<out Number>> (val data: Array<out T>, val rng: SplittableRandom, val distance: (a: T, b: T) -> Double) {
+class KMeansClustererComplex<T: ComplexVectorValue<out Number>> (val k: Int, val rng: SplittableRandom, val distance: (a: T, b: T) -> Double) {
     companion object {
         private val LOGGER = LoggerFactory.getLogger(KMeansClustererComplex::class.java)
     }
@@ -43,7 +40,7 @@ class KMeansClustererComplex<T: ComplexVectorValue<out Number>> (val data: Array
     /**
      * returns an array of [ClusterCenter]
      */
-    fun cluster(k: Int, maxIterations: Int): Array<ClusterCenter<T>> {
+    fun cluster(data: Array<out T>, maxIterations: Int): Array<ClusterCenter<T>> {
         // initialize by choosing a random datapoint as cluster centers
         var centroids = List(k) {
             data[rng.nextInt(data.size)].copy() as T // unchecked is ok, since we copy from T type...
