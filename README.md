@@ -18,12 +18,23 @@ or initialize submodules after cloning using the following command from within t
 Before executing or building Cottontail DB, you must generate Proto sources by executing the Gradle task `generateProto`, i.e. by running `./gradlew generateProto` from within the project directory.
 
 ### Building and starting Cottontail DB
-You can simply start a Cottontail DB instance using `./gradlew run`. Alternatively, an executable distribution of Cottontail DB can then be built from sources using the 
+You can simply build an executable JAR with the `./gradlew shadowJar` gradle task.
+Alternatively -- preferably -- an executable distribution of Cottontail DB can then be built from sources using the 
 Gradle tasks `distTar` or `distZip`. Distributions will be stored relative to the project root in `build/distributions` as either TAR or ZIP file.
 
 Cottontail DB release artifacts (either built or downloaded from the releases page) can be started by executing `bin/cottontaildb` or `bin/cottontaildb.bat` (Windows). It requires a path to a valid configuration file as a program argument, i.e.
 
 ``bin/cottontaildb /path/to/your/config.json``
+
+This should bring up the following cottontail CLI prompt:
+
+```
+2020-09-16 15:20:20 INFO  CottontailGrpcServer:62 - Cottontail DB server is up and running at port 1865 ! Hop along...
+cottontaildb> 
+```
+
+To get a list of available commands, type `help`. Currently, there is type-ahead for commands,
+schema and entity.
 
 ### Using Cottontail DB Docker Container
 
@@ -60,6 +71,33 @@ To connect to Cottontail DB, use the gRPC library of your preference based on th
 ```
 
 The [example repository](https://github.com/vitrivr/cottontaildb-examples) points to some simple examples as to how Cottontail DB can be used.
+
+## Citation
+We kindly ask you to refer to the following paper in publications mentioning or employing Cottontail DB:
+
+Ralph Gasser, Luca Rossetto, Silvan Heller, Heiko Schuldt. _Cottontail DB: An Open Source Database System for Multimedia Retrieval and Analysis._ In Proceedings of 28th ACM International Conference on Multimedia (ACM MM 2020), Seattle, USA, 2020
+
+**Link:** https://doi.org/10.1145/3394171.3414538
+
+**Bibtex:**
+
+```
+@inproceedings{10.1145/3394171.3414538,
+    author = {Gasser, Ralph and Rossetto, Luca and Heller, Silvan and Schuldt, Heiko},
+    title = {Cottontail DB: An Open Source Database System for Multimedia Retrieval and Analysis},
+    year = {2020},
+    isbn = {9781450379885},
+    publisher = {Association for Computing Machinery},
+    address = {New York, NY, USA},
+    doi = {10.1145/3394171.3414538},
+    booktitle = {Proceedings of the 28th ACM International Conference on Multimedia},
+    pages = {4465–4468},
+    numpages = {4},
+    keywords = {open source, multimedia retrieval, database, multimedia indexing, data management system},
+    location = {Seattle, WA, USA},
+    series = {MM '20}
+}
+```
 
 ## Credits
 Cottontail DB is based on the ideas presented in the following papers:
