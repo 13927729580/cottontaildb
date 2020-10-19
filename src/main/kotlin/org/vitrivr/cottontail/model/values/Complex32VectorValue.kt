@@ -145,7 +145,7 @@ inline class Complex32VectorValue(val data: FloatArray) : ComplexVectorValue<Flo
                 is Complex64VectorValue -> FloatArray(length shl 1) { (this.data[(start shl 1) + it] - other.data[(otherStart shl 1) + it]).toFloat() }
                 else -> FloatArray(length shl 1) {
                     if (it % 2 == 0) {
-                        this.data[(start shl 1) + it] - other[start + it / 2].value.toFloat()
+                        this.data[(start shl 1) + it] - other[otherStart + it / 2].value.toFloat()
                     } else {
                         this.data[(start shl 1) + it]
                 }

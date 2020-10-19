@@ -6,19 +6,20 @@ import org.mapdb.DataInput2
 import org.mapdb.DataOutput2
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import org.vitrivr.cottontail.database.column.ColumnType
+import org.vitrivr.cottontail.database.column.Complex32VectorColumnType
+import org.vitrivr.cottontail.database.column.Complex64VectorColumnType
+import org.vitrivr.cottontail.database.column.DoubleVectorColumnType
 import org.vitrivr.cottontail.database.serializers.FixedComplex32VectorSerializer
 import org.vitrivr.cottontail.database.serializers.FixedComplex64VectorSerializer
 import org.vitrivr.cottontail.database.serializers.FixedDoubleVectorSerializer
-import org.vitrivr.cottontail.database.serializers.FixedFloatVectorSerializer
 import org.vitrivr.cottontail.model.values.Complex32VectorValue
 import org.vitrivr.cottontail.model.values.Complex64VectorValue
 import org.vitrivr.cottontail.model.values.DoubleVectorValue
-import org.vitrivr.cottontail.model.values.FloatVectorValue
 import org.vitrivr.cottontail.model.values.types.ComplexVectorValue
 import org.vitrivr.cottontail.model.values.types.NumericValue
 import org.vitrivr.cottontail.model.values.types.RealVectorValue
 import org.vitrivr.cottontail.model.values.types.VectorValue
-import kotlin.reflect.KClass
 
 /**
  * Product Quantizer that minimizes inner product error. input data should be permuted for better results!
@@ -27,14 +28,15 @@ import kotlin.reflect.KClass
  * Roughly following Guo et al. 2015 - Quantization based Fast Inner Product Search
  * todo: How to serialize this, now that we have multiple possible types? Pass type as property and serialize it as well (ugly hack)?
  */
-class PQ(val codebooks: Array<PQCodebook<out VectorValue<*>>>, val type: KClass<out VectorValue<*>>) {
+class PQ(val codebooks: Array<PQCodebook<out VectorValue<*>>>, val type: ColumnType<out VectorValue<*>>) {
     companion object Serializer : org.mapdb.Serializer<PQ> {
         private val LOGGER: Logger = LoggerFactory.getLogger(PQ::class.java)
         const val MAX_ITERATIONS = 250
-        fun fromPermutedData(numSubspaces: Int, numCentroids: Int, permutedData: Array<out VectorValue<*>>): Pair<PQ, Array<IntArray>> {
+        fun fromPermutedData(numSubspaces: Int, numCentroids: Int, permutedData: Array<out VectorValue<*>>, type: ColumnType<out VectorValue<*>>): Pair<PQ, Array<IntArray>> {
             LOGGER.info("Initializing PQ from initial data.")
             // some assumptions. Some are for documentation, some are cheap enough to actually keep and check
             require(permutedData.all { it.logicalSize == permutedData[0].logicalSize && it::class.java == permutedData[0]::class.java })
+            require(permutedData[0]::class == type.type) { "Data and type arguments must agree!" }
             require(numSubspaces > 0)
             require(numCentroids > 0)
             require(permutedData[0].logicalSize >= numSubspaces)
@@ -69,7 +71,7 @@ class PQ(val codebooks: Array<PQCodebook<out VectorValue<*>>>, val type: KClass<
                 LOGGER.info("Done processing subspace ${k + 1} of $numSubspaces")
             }
             LOGGER.info("PQ initialization done.")
-            return PQ(codebooks.map { it!! }.toTypedArray(), permutedData[0]::class) to subspaceSignatures
+            return PQ(codebooks.map { it!! }.toTypedArray(), type) to subspaceSignatures
         }
 
         fun fromPermutedData(numSubspaces: Int, numCentroids: Int, permutedData: Array<DoubleArray>, permutedExampleQueryData: Array<DoubleArray>? = null): Pair<PQ, Array<IntArray>> {
@@ -103,7 +105,7 @@ class PQ(val codebooks: Array<PQCodebook<out VectorValue<*>>>, val type: KClass<
                 LOGGER.info("Done processing subspace ${k + 1} of $numSubspaces")
             }
             LOGGER.info("PQ initialization done.")
-            return PQ(codebooks.map { it!! }.toTypedArray(), DoubleVectorValue::class) to subspaceSignatures
+            return PQ(codebooks.map { it!! }.toTypedArray(), DoubleVectorColumnType) to subspaceSignatures
         }
 
         private fun splitDataIntoSubspaces(numSubspaces: Int, permutedData: Array<DoubleArray>, dimensionsPerSubspace: Int): List<Array<DoubleArray>> {
@@ -119,6 +121,8 @@ class PQ(val codebooks: Array<PQCodebook<out VectorValue<*>>>, val type: KClass<
         /**
          * Serializes the content of the given value into the given
          * [DataOutput2].
+         * todo: figure out why cleaner way via value.type.serializer(size) does not work... it's a generics issue
+         *       wrt. in/out
          *
          * @param out DataOutput2 to save object into
          * @param value Object to serialize
@@ -126,36 +130,30 @@ class PQ(val codebooks: Array<PQCodebook<out VectorValue<*>>>, val type: KClass<
          * @throws IOException in case of an I/O error
          */
         override fun serialize(out: DataOutput2, value: PQ) {
-            val serializer = when(value.type) {
-                Complex32VectorValue::class -> {
-                    FixedComplex32VectorSerializer(value.dimensionsPerSubspace)
+            out.packInt(value.numSubspaces)
+            out.packInt(value.numCentroids)
+            out.packInt(value.dimensionsPerSubspace)
+            out.writeUTF(value.type.name)
+            value.codebooks.forEach {
+                it.centroids.forEach { c ->
+                    when (value.type) {
+                        is Complex32VectorColumnType -> value.type.serializer(value.dimensionsPerSubspace).serialize(out, c as Complex32VectorValue)
+                        is Complex64VectorColumnType -> value.type.serializer(value.dimensionsPerSubspace).serialize(out, c as Complex64VectorValue)
+                        is DoubleVectorColumnType -> value.type.serializer(value.dimensionsPerSubspace).serialize(out, c as DoubleVectorValue)
+                        else -> TODO("Other types not yet supported")
+                    }
                 }
-                Complex64VectorValue::class -> {
-                    FixedComplex64VectorSerializer(value.dimensionsPerSubspace)
+                val cov = it.inverseDataCovarianceMatrix //first dim are rows
+                for (i in 0 until value.dimensionsPerSubspace) {
+                    when (value.type) {
+                        is Complex32VectorColumnType -> FixedComplex32VectorSerializer(value.dimensionsPerSubspace).serialize(out, cov[i] as Complex32VectorValue)
+                        is Complex64VectorColumnType -> FixedComplex64VectorSerializer(value.dimensionsPerSubspace).serialize(out, cov[i] as Complex64VectorValue)
+                        is DoubleVectorColumnType -> FixedDoubleVectorSerializer(value.dimensionsPerSubspace).serialize(out, cov[i] as DoubleVectorValue)
+                        else -> TODO("Other types not yet supported")
+                    }
                 }
-                DoubleVectorValue::class -> {
-                    FixedDoubleVectorSerializer(value.dimensionsPerSubspace)
-                }
-                FloatVectorValue::class -> {
-                    FixedFloatVectorSerializer(value.dimensionsPerSubspace)
-                }
-                else -> TODO("Other types not yet supported")
             }
-            TODO()
         }
-//            out.packInt(value.numSubspaces)
-//            out.packInt(value.numCentroids)
-//            out.packInt(value.dimensionsPerSubspace)
-//            value.codebooks.forEach {
-//                it.centroids.forEach { c ->
-//                    FixedDoubleVectorSerializer.serialize(out, c)
-//                }
-//                val cov = it.inverseDataCovarianceMatrix.data // first dim are rows
-//                for (i in 0 until value.dimensionsPerSubspace) {
-//                    doubleArraySerializer.serialize(out, cov[i])
-//                }
-//            }
-//        }
 
         /**
          * Deserializes and returns the content of the given [DataInput2].
@@ -168,20 +166,21 @@ class PQ(val codebooks: Array<PQCodebook<out VectorValue<*>>>, val type: KClass<
          * @throws IOException in case of an I/O error
          */
         override fun deserialize(input: DataInput2, available: Int): PQ {
-            // todo: We now also need to serialize the type.. how is this done in the rest of cottontail?
-            TODO()
-//            val numSubspaces = input.unpackInt()
-//            val numCentroids = input.unpackInt()
-//            val dimensionsPerSubspace = input.unpackInt()
-//            return PQ(Array(numSubspaces) {
-//                PQCodebook(Array(numCentroids) {
-//                    // todo: check if available - pos is actually correct...
-//                    doubleArraySerializer.deserialize(input, available - input.pos)
-//                },
-//                createRealMatrix(Array(dimensionsPerSubspace) {
-//                    doubleArraySerializer.deserialize(input, available - input.pos)
-//                }))
-//            })
+            val numSubspaces = input.unpackInt()
+            val numCentroids = input.unpackInt()
+            val dimensionsPerSubspace = input.unpackInt()
+            @Suppress("UNCHECKED_CAST")
+            val type = ColumnType.forName(input.readUTF()) as ColumnType<out VectorValue<*>>
+            val s = type.serializer(dimensionsPerSubspace)
+            return PQ(Array(numSubspaces) {
+                PQCodebook(Array(numCentroids) {
+                    type.cast(s.deserialize(input, available - input.pos))!!
+                },
+                Array(dimensionsPerSubspace) {
+                    type.cast(s.deserialize(input, available - input.pos))!!
+                })
+            },
+            type)
         }
     }
 
@@ -219,7 +218,6 @@ class PQ(val codebooks: Array<PQCodebook<out VectorValue<*>>>, val type: KClass<
      * Calculates the IP between
      * the approximation specified with the index and the supplied vector which was permuted with the same permutation
      * that was applied to the data when creating this [PQ] object.
-     * todo: this always copies! baaad
      */
     fun approximateAsymmetricIP(sigi: IntArray, v: VectorValue<*>): NumericValue<*> {
         require(v.logicalSize == numSubspaces * dimensionsPerSubspace)
@@ -256,23 +254,12 @@ class PQ(val codebooks: Array<PQCodebook<out VectorValue<*>>>, val type: KClass<
 //        )
     }
 
-    fun precomputeCentroidQueryIPVectorValue(permutedQuery: VectorValue<*>): PQCentroidQueryIPVectorValue {
-        return PQCentroidQueryIPVectorValue(Array(numSubspaces) { k ->
-            when (permutedQuery) {
-                is RealVectorValue<*> -> {
-                    FloatVectorValue(FloatArray(numCentroids) { i ->
-                        permutedQuery.dot(codebooks[k].centroids[i], k * dimensionsPerSubspace, 0, dimensionsPerSubspace).value.toFloat()
-                    })
-                }
-                is ComplexVectorValue<*> -> {
-                    Complex32VectorValue(Array(numCentroids) { i ->
-                        permutedQuery.dot(codebooks[k].centroids[i], k * dimensionsPerSubspace, 0, dimensionsPerSubspace).asComplex32()
-                    })
-                }
-                else -> throw IllegalArgumentException("Unsupported type ${permutedQuery::class}")
-            }
-        }
-        )
+    fun precomputeCentroidQueryIPComplexVectorValue(permutedQuery: ComplexVectorValue<*>): PQCentroidQueryIPComplexVectorValue {
+        return PQCentroidQueryIPComplexVectorValue(Array(numSubspaces) { k ->
+            Complex32VectorValue(Array(numCentroids) { i ->
+                permutedQuery.dot(codebooks[k].centroids[i], k * dimensionsPerSubspace, 0, dimensionsPerSubspace).asComplex32()
+            })
+        })
     }
 
     fun precomputeCentroidQueryIPFloat(permutedQuery: DoubleArray): PQCentroidQueryIPFloat {

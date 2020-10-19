@@ -6,5 +6,6 @@ enum class PQIndexConfigParamMapKeys(val key: String) {
     LEARNING_DATA_FRACTION("learning_data_fraction"),
     LOOKUPTABLE_PRECISION("lookuptable_precision"), // todo: this should be a query-time configuration
     K_APPROX_SCAN("k_approx_scan"), // todo: this as well!
-    SEED("seed")
+    SEED("seed"),
+    TYPE("type"),
 }

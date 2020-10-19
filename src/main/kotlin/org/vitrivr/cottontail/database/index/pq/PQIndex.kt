@@ -4,6 +4,7 @@ import org.mapdb.DBMaker
 import org.mapdb.Serializer
 import org.slf4j.LoggerFactory
 import org.vitrivr.cottontail.database.column.ColumnType
+import org.vitrivr.cottontail.database.column.Complex32VectorColumnType
 import org.vitrivr.cottontail.database.entity.Entity
 import org.vitrivr.cottontail.database.events.DataChangeEvent
 import org.vitrivr.cottontail.database.index.Index
@@ -96,8 +97,6 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
     val rng: SplittableRandom
     lateinit var pq: PQ
     val pqStore = db.atomicVar(PQ_NAME, PQ.Serializer).createOrOpen()
-    val permutation: IntArray // use this to permute a record (like iterate over original dimensions i from 0 until n and map it to the permuted dimension given by permutation[i]
-    val reversePermutation: IntArray // use this if you want to find the original dimension corresponding to i when iterating i from 0 until n in permuted space
     val signatures = mutableListOf<IntArray>()
     val signaturesTId = mutableListOf<Long>()
     val signaturesStore = db.hashMap(SIG_NAME, Serializer.LONG, Serializer.INT_ARRAY).counterEnable().createOrOpen()
@@ -114,7 +113,7 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
             if (cod == null) {
 //                throw StoreException("No config supplied but the config from disk was null!")
                 LOGGER.warn("No config supplied, but the config from disk was null!! Using a dummy config. Please consider this index invalid!")
-                this.config = PQIndexConfig(1, 1, 5e-3, LookupTablePrecision.SINGLE, 100, 1234L)
+                this.config = PQIndexConfig(1, 1, 5e-3, LookupTablePrecision.SINGLE, 100, 1234L, Complex32VectorColumnType)
             } else {
                 this.config = cod
             }
@@ -130,10 +129,6 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
         require(columns[0].logicalSize % this.config.numSubspaces == 0)
         dimensionsPerSubspace = columns[0].logicalSize / this.config.numSubspaces
         rng = SplittableRandom(this.config.seed)
-        with(generateRandomPermutation(columns[0].logicalSize, rng)) {
-            reversePermutation = first
-            permutation = second
-        }
         pqStore.get()?.let { pq = it }
 
         this.db.commit() // this writes config stuff, so that the commit doesn't wait until rebuild()
@@ -220,7 +215,8 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
             }
         }.unzip()
         LOGGER.info("Learning with ${learningTIds.size} vectors...")
-        val (pq, signatures) = PQ.fromPermutedData(config.numSubspaces, config.numCentroids, learningData.toTypedArray())
+        val (pq, signatures) = PQ.fromPermutedData(config.numSubspaces, config.numCentroids, learningData.toTypedArray(), config.type)
+        this.pq = pq
         pqStore.set(pq)
         LOGGER.info("Adding real sigs to new store")
         signaturesStore.putAll(signatures.mapIndexed { i, sign ->
@@ -255,8 +251,8 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
         val im = DoubleArray(dimensionsPerSubspace * config.numSubspaces)
         (0 until config.numSubspaces * dimensionsPerSubspace).forEach {
             val complexValue = v[it]
-            re[permutation[it]] = complexValue.real.value.toDouble()
-            im[permutation[it]] = complexValue.imaginary.value.toDouble()
+            re[it] = complexValue.real.value.toDouble()
+            im[it] = complexValue.imaginary.value.toDouble()
         }
         return Pair(re, im)
     }
@@ -335,14 +331,14 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
             knnQueries.chunked(chunksize).parallelStream().forEach { knnQueriesChunk ->
 //            LOGGER.info("Processing query ${i + 1} of ${p.query.size}")
                 LOGGER.info("Precomputing IPs between query and centroids")
-                val queryCentroidIP = Array(knnQueriesChunk.size) { pqReal.precomputeCentroidQueryIPVectorValue(knnQueriesChunk[it].second) }
+                val queryCentroidIP = Array(knnQueriesChunk.size) { pqReal.precomputeCentroidQueryIPComplexVectorValue(knnQueriesChunk[it].second) }
                 LOGGER.info("Scanning signatures")
                 signatures.indices.forEach {
                     knnQueriesChunk.indices.forEach { i ->
                         val sigOffset = it * sigLength // offset into sign array.
                         val tid = signaturesTId[it]
                         val absIPSqApprox =
-                                queryCentroidIP[i].approximateIP(sigReIm, sigOffset, sigLength).abs().value.toFloat()
+                                queryCentroidIP[i].approximateIP(sigReIm, sigOffset, sigLength).abs().value
 //                if (knn.added < knn.k || knn.peek()!!.second > -absIPSqApprox) // do we really need to create a new pair every single time?
                         // we don't, but keep it for comparability with brute-force
                         knnQueriesChunk[i].first.offer(ComparablePair(tid, -absIPSqApprox))
@@ -353,13 +349,13 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
         else {
             knnQueries.parallelStream().forEach { (knn, q) ->
                 LOGGER.info("Precomputing IPs between query and centroids")
-                val queryCentroidIPRealReal =  pqReal.precomputeCentroidQueryIPVectorValue(q)
+                val queryCentroidIPRealReal =  pqReal.precomputeCentroidQueryIPComplexVectorValue(q)
                 LOGGER.info("Scanning signatures")
                 signatures.indices.forEach {
                     val sigOffset = it * sigLength // offset into sign array
                     val tid = signaturesTId[it]
                     val absIPSqApprox =
-                            queryCentroidIPRealReal.approximateIP(sigReIm, sigOffset, sigLength).abs().value.toFloat()
+                            queryCentroidIPRealReal.approximateIP(sigReIm, sigOffset, sigLength).abs().value
 //                if (knn.added < knn.k || knn.peek()!!.second > -absIPSqApprox) // do we really need to create a new pair every single time?
                     knn.offer(ComparablePair(tid, -absIPSqApprox))
                 }

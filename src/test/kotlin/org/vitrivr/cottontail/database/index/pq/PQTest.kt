@@ -2,6 +2,7 @@ package org.vitrivr.cottontail.database.index.pq
 
 import com.github.doyaaaaaken.kotlincsv.dsl.csvWriter
 import org.junit.jupiter.api.Test
+import org.vitrivr.cottontail.database.column.Complex64VectorColumnType
 import org.vitrivr.cottontail.math.knn.metrics.AbsoluteInnerProductDistance
 import org.vitrivr.cottontail.model.values.Complex64VectorValue
 import org.vitrivr.cottontail.model.values.DoubleVectorValue
@@ -9,6 +10,8 @@ import org.vitrivr.cottontail.model.values.DoubleVectorValue
 import org.vitrivr.cottontail.testutils.getComplexVectorsFromFile
 import org.vitrivr.cottontail.testutils.sampleVectorsFromCsv
 import java.io.File
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
 import java.util.*
 import kotlin.math.pow
 import kotlin.time.ExperimentalTime
@@ -39,7 +42,7 @@ internal class PQTest {
         val seed = 1234L
         val rng = SplittableRandom(seed)
         val permute = false
-        val outFileDir = File("testOut/pqReal/nss${numSubspaces}nc${numCentroids}seed${seed}Phasesum0WithoutQDataPermuted${permute}/")
+        val outFileDir = File("testOut/pqReal/${getCurrentTimestamp()}_nss${numSubspaces}nc${numCentroids}seed${seed}Phasesum0WithoutQDataPermuted${permute}/")
         outFileDir.mkdirs()
         val (pqRealTimedDataLearned, pqImagTimedDataLearned) = if (permute) {
             val (permutation, reversePermutation) = PQIndex.generateRandomPermutation(realDbData[0].size, rng)
@@ -261,7 +264,7 @@ internal class PQTest {
         val numSubspaces = 20
         val numCentroids = 64
         val seed = 1234L
-        val outFileDir = File("testOut/pqComplex_refactoredPlusPlus/nss${numSubspaces}nc${numCentroids}seed${seed}Phasesum0WithoutQDataPermute${permute}/")
+        val outFileDir = File("testOut/pqComplex_refactoredPlusPlus/${getCurrentTimestamp()}_nss${numSubspaces}nc${numCentroids}seed${seed}Phasesum0WithoutQDataPermute${permute}/")
         outFileDir.mkdirs()
         val rng = SplittableRandom(seed)
         val (pq , dataLearned) = if (permute) {
@@ -271,9 +274,9 @@ internal class PQTest {
                     v[permutation[i]]
                 }.toTypedArray())
             }.toTypedArray()
-            PQ.fromPermutedData(numSubspaces, numCentroids, permutedDbData) to permutedDbData
+            PQ.fromPermutedData(numSubspaces, numCentroids, permutedDbData, Complex64VectorColumnType) to permutedDbData
         } else {
-            PQ.fromPermutedData(numSubspaces, numCentroids, dbData) to dbData
+            PQ.fromPermutedData(numSubspaces, numCentroids, dbData, Complex64VectorColumnType) to dbData
         }
         val numPairs = 100000
         val header = listOf("i", "j",
@@ -339,4 +342,6 @@ internal class PQTest {
 
         // todo: silhouette analysis (maybe in python)
     }
+
+    private fun getCurrentTimestamp() = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss.SSSSSS").format(LocalDateTime.now())
 }
