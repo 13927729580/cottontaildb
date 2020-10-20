@@ -255,8 +255,8 @@ class PQCodebook<T: VectorValue<*>> (val centroids: Array<T>, val inverseDataCov
             require(inverseDataCovMatrix.size == length)
             require(inverseDataCovMatrix[0].logicalSize == length)
             var dist: ComplexValue<*> = when (val t = a::class.java) {
-                Complex32VectorValue::class.java -> Complex32Value.ZERO
-                Complex64VectorValue::class.java -> Complex64Value.ZERO
+                Complex32VectorValue::class.java -> Complex32Value(FloatArray(2))
+                Complex64VectorValue::class.java -> Complex64Value(DoubleArray(2))
                 else -> error("Unknown type $t")
             }
 

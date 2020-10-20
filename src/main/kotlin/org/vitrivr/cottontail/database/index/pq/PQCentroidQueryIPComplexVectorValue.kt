@@ -18,7 +18,7 @@ inline class PQCentroidQueryIPComplexVectorValue(val data: Array<Complex32Vector
      */
     @ExperimentalUnsignedTypes
     inline fun approximateIP(signature: UShortArray, start: Int, length: Int): Complex32Value {
-        val ip = Complex32Value.ZERO
+        val ip = Complex32Value(FloatArray(2))
         (0 until length).forEach {
             ip.data[0] += data[it].data[signature[it + start].toInt() shl 1]
             ip.data[1] += data[it].data[(signature[it + start].toInt() shl 1) + 1]
