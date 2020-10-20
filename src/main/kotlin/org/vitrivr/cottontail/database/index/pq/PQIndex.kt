@@ -30,6 +30,7 @@ import org.vitrivr.cottontail.model.values.types.VectorValue
 import org.vitrivr.cottontail.utilities.extensions.write
 import java.nio.file.Path
 import java.util.*
+import kotlin.collections.HashMap
 
 /**
  * author: Gabriel Zihlmann
@@ -98,8 +99,8 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
     lateinit var pq: PQ
     val pqStore = db.atomicVar(PQ_NAME, PQ.Serializer).createOrOpen()
     val signatures = mutableListOf<IntArray>()
-    val signaturesTId = mutableListOf<Long>()
-    val signaturesStore = db.hashMap(SIG_NAME, Serializer.LONG, Serializer.INT_ARRAY).counterEnable().createOrOpen()
+    val tIds = mutableListOf<LongArray>()
+    val signaturesStore = db.hashMap(SIG_NAME, Serializer.INT_ARRAY, Serializer.LONG_ARRAY).counterEnable().createOrOpen()
 
     init {
         if (columns.size != 1) {
@@ -141,12 +142,11 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
 
     private fun loadSignaturesFromDisk() {
         signatures.clear()
-        signaturesTId.clear()
-        LOGGER.info("Index ${name.simple} loading Real Signatures from store")
-        val signaturesTIdReal = mutableListOf<Long>()
-        signaturesStore.forEach { tid, signature ->
+        tIds.clear()
+        LOGGER.info("Index ${name.simple} loading Signatures from store")
+        signaturesStore.forEach { signature, tIds_ ->
             signatures.add(signature!!)
-            signaturesTId.add(tid!!)
+            tIds.add(tIds_)
         }
         LOGGER.info("Done.")
     }
@@ -200,8 +200,8 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
     override fun rebuild(tx: Entity.Tx) {
         //todo: don't copy data
         LOGGER.info("Rebuilding PQIndex.")
-        signaturesStore.clear()
-        LOGGER.info("Permuting data.")
+        val signaturesTidsLoc = HashMap<List<Int>, MutableList<Long>>()
+        LOGGER.info("Preparing data.")
         // because tx doesn't have a simple .filter method where we can specify any old boolean, we need to
         // roll our own...
         // this filters the elements randomly based on the learning fraction and permutes them
@@ -218,15 +218,11 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
         val (pq, signatures) = PQ.fromPermutedData(config.numSubspaces, config.numCentroids, learningData.toTypedArray(), config.type)
         this.pq = pq
         pqStore.set(pq)
-        LOGGER.info("Adding real sigs to new store")
-        signaturesStore.putAll(signatures.mapIndexed { i, sign ->
-            learningTIds[i] to sign
-        })
-        signaturesTId.addAll(learningTIds)
-        LOGGER.info("Done.")
+        (signatures zip learningTIds).forEach { (sig, tid) ->
+            signaturesTidsLoc.getOrPut(sig.toList()) { mutableListOf() }.add(tid)
+        }
         LOGGER.info("Learning done.")
         // now get and add signatures for elements not in learning set
-        // todo: deduplicate
         LOGGER.info("Generating signatures for all vectors...")
         val learningTIdsSet = learningTIds.toHashSet() // convert to hash set for O(1) lookup
         var done = 0
@@ -235,13 +231,19 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
             done++
             if (learningTIdsSet.contains(r.tupleId))
                 return@forEach
-            val sig = this.pq.getSignature(r[columns[0]] as VectorValue<*>)
-            signaturesStore[r.tupleId] = sig
+            val sig = this.pq.getSignature(r[columns[0]] as VectorValue<*>).toList()
+            signaturesTidsLoc.getOrPut(sig) { mutableListOf() }.add(r.tupleId)
         }
+        LOGGER.info("Done. Storing signatures.")
+        // map to intArray for storing. We need to use List<Int> in kotlin code to compare signatures
+        // structurally (IntArray is only compared by ref)
+        signaturesStore.clear()
+        signaturesStore.putAll(signaturesTidsLoc.map { (k, v) -> k.toIntArray() to v.toLongArray()}.toMap())
         LOGGER.info("Done generating and storing signatures. Committing.")
         db.commit()
         LOGGER.info("Loading signatures from disk.")
         loadSignaturesFromDisk()
+        LOGGER.info("Done.")
         LOGGER.info("PQIndex rebuild done.")
     }
 
@@ -294,18 +296,19 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
 //        val knns = scanSignQueries(p, pqReal, pqImag)
 
         // get exact distances...
-        LOGGER.info("Re-ranking $approxK approximative matches with exact distances.")
+        LOGGER.info("Re-ranking $approxK signature matches with exact distances.")
         val knnsExact = knns.mapIndexed { i, knn ->
+            var numTids = 0
             val knnNew = if (p.k == 1) MinSingleSelection<ComparablePair<Long, DoubleValue>>() else MinHeapSelection<ComparablePair<Long, DoubleValue>>(p.k)
             (0 until knn.size).forEach {
-                val tid = knn[it].first
-                val exact = tx.read(tid)[columns[0]]!! as ComplexVectorValue<*>
-                knnNew.offer(ComparablePair(tid, p.distance(exact, p.query[i])))
+                val tIds = knn[it].first
+                tIds.forEach { tid ->
+                    numTids++
+                    val exact = tx.read(tid)[columns[0]]!! as ComplexVectorValue<*>
+                    knnNew.offer(ComparablePair(tid, p.distance(exact, p.query[i])))
+                }
             }
-            if (LOGGER.isTraceEnabled) {
-                val distDiff = (p.distance(tx.read(knn.peek()!!.first)[columns[0]]!! as ComplexVectorValue<*>, p.query[i]) - knnNew.peek()!!.second).value
-                LOGGER.trace("query $i Distance difference between approximate best match and actual with approxK=$approxK: $distDiff")
-            }
+            LOGGER.trace("Considered $numTids after approximation scan for query $i")
             knnNew
         }
         LOGGER.info("Done")
@@ -313,12 +316,9 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
     }
 
 
-    /**
-     * todo: deduplication
-     */
     @ExperimentalUnsignedTypes
-    private fun scanQueriesSign(p: KnnPredicate<*>, pqReal: PQ, k: Int = p.k): List<Selection<ComparablePair<Long, Float>>> {
-        LOGGER.debug("Converting signature arrays")
+    private fun scanQueriesSign(p: KnnPredicate<*>, pqReal: PQ, k: Int = p.k): List<Selection<ComparablePair<LongArray, Float>>> {
+        LOGGER.debug("Converting signature array")
         val sigLength = config.numSubspaces
         val sigReIm = UShortArray(signatures.size * sigLength) {
             signatures[it / (sigLength)][it % (sigLength)].toUShort()
@@ -326,7 +326,7 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
         LOGGER.debug("Done.")
         val knnQueries = p.query.mapIndexed { i, q_ ->
             val q = q_ as Complex32VectorValue
-            (if (k == 1) MinSingleSelection<ComparablePair<Long, Float>>() else MinHeapSelection<ComparablePair<Long, Float>>(k)) to q
+            (if (k == 1) MinSingleSelection<ComparablePair<LongArray, Float>>() else MinHeapSelection<ComparablePair<LongArray, Float>>(k)) to q
         }
         val chunksize = 1
         if (chunksize > 1) {
@@ -338,12 +338,12 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
                 signatures.indices.forEach {
                     knnQueriesChunk.indices.forEach { i ->
                         val sigOffset = it * sigLength // offset into sign array.
-                        val tid = signaturesTId[it]
+                        val tIdsOfSig = tIds[it]
                         val absIPSqApprox =
                                 queryCentroidIP[i].approximateIP(sigReIm, sigOffset, sigLength).abs().value
 //                if (knn.added < knn.k || knn.peek()!!.second > -absIPSqApprox) // do we really need to create a new pair every single time?
                         // we don't, but keep it for comparability with brute-force
-                        knnQueriesChunk[i].first.offer(ComparablePair(tid, -absIPSqApprox))
+                        knnQueriesChunk[i].first.offer(ComparablePair(tIdsOfSig, -absIPSqApprox))
                     }
                 }
             }
@@ -355,11 +355,11 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
                 if (LOGGER.isTraceEnabled) LOGGER.trace("Scanning signatures")
                 signatures.indices.forEach {
                     val sigOffset = it * sigLength // offset into sign array
-                    val tid = signaturesTId[it]
+                    val tidOfSig = tIds[it]
                     val absIPSqApprox =
                             queryCentroidIPRealReal.approximateIP(sigReIm, sigOffset, sigLength).abs().value
 //                if (knn.added < knn.k || knn.peek()!!.second > -absIPSqApprox) // do we really need to create a new pair every single time?
-                    knn.offer(ComparablePair(tid, -absIPSqApprox))
+                    knn.offer(ComparablePair(tidOfSig, -absIPSqApprox))
                 }
             }
         }
