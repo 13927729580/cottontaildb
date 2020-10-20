@@ -302,8 +302,10 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
                 val exact = tx.read(tid)[columns[0]]!! as ComplexVectorValue<*>
                 knnNew.offer(ComparablePair(tid, p.distance(exact, p.query[i])))
             }
-            val distDiff = knn.peek()!!.second - knnNew.peek()!!.second.value.toFloat()
-            LOGGER.debug("query $i Distance difference between approximate best match and actual with approxK=$approxK: $distDiff")
+            if (LOGGER.isTraceEnabled) {
+                val distDiff = (p.distance(tx.read(knn.peek()!!.first)[columns[0]]!! as ComplexVectorValue<*>, p.query[i]) - knnNew.peek()!!.second).value
+                LOGGER.trace("query $i Distance difference between approximate best match and actual with approxK=$approxK: $distDiff")
+            }
             knnNew
         }
         LOGGER.info("Done")
@@ -316,12 +318,12 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
      */
     @ExperimentalUnsignedTypes
     private fun scanQueriesSign(p: KnnPredicate<*>, pqReal: PQ, k: Int = p.k): List<Selection<ComparablePair<Long, Float>>> {
-        LOGGER.info("Converting signature arrays")
+        LOGGER.debug("Converting signature arrays")
         val sigLength = config.numSubspaces
         val sigReIm = UShortArray(signatures.size * sigLength) {
             signatures[it / (sigLength)][it % (sigLength)].toUShort()
         }
-        LOGGER.info("Done.")
+        LOGGER.debug("Done.")
         val knnQueries = p.query.mapIndexed { i, q_ ->
             val q = q_ as Complex32VectorValue
             (if (k == 1) MinSingleSelection<ComparablePair<Long, Float>>() else MinHeapSelection<ComparablePair<Long, Float>>(k)) to q
@@ -330,7 +332,7 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
         if (chunksize > 1) {
             knnQueries.chunked(chunksize).parallelStream().forEach { knnQueriesChunk ->
 //            LOGGER.info("Processing query ${i + 1} of ${p.query.size}")
-                LOGGER.info("Precomputing IPs between query and centroids")
+                if (LOGGER.isTraceEnabled) LOGGER.trace("Precomputing IPs between query and centroids")
                 val queryCentroidIP = Array(knnQueriesChunk.size) { pqReal.precomputeCentroidQueryIPComplexVectorValue(knnQueriesChunk[it].second) }
                 LOGGER.info("Scanning signatures")
                 signatures.indices.forEach {
@@ -348,9 +350,9 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
         }
         else {
             knnQueries.parallelStream().forEach { (knn, q) ->
-                LOGGER.info("Precomputing IPs between query and centroids")
+                if (LOGGER.isTraceEnabled) LOGGER.trace("Precomputing IPs between query and centroids")
                 val queryCentroidIPRealReal =  pqReal.precomputeCentroidQueryIPComplexVectorValue(q)
-                LOGGER.info("Scanning signatures")
+                if (LOGGER.isTraceEnabled) LOGGER.trace("Scanning signatures")
                 signatures.indices.forEach {
                     val sigOffset = it * sigLength // offset into sign array
                     val tid = signaturesTId[it]
