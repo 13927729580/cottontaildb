@@ -48,6 +48,12 @@ import kotlin.collections.HashSet
  * * permutation of dimensions will no longer be applied. PQ is 5-10% more accurate without it!
  * * quantizing complex vectors directly is possible and about as accurate as real vectors. This has been changed
  * * in this class now. Performance implications need to be assessed
+ *
+ * 22.10.2020:
+ * * deduplication is implemented. Brings significant speedups for lower subspace and centroid counts (2-3x)
+ * * beneficial to go to higher k in approximate scan. This requires more effort on re-ranking the approx
+ *   matches (can become dominant and take a multiple of the time to scan without parallelization).
+ *   This has been parallelized now.
  */
 @ExperimentalUnsignedTypes
 class PQIndex(override val name: Name.IndexName, override val parent: Entity, override val columns: Array<ColumnDef<*>>,
@@ -316,7 +322,6 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
      *
      * @throws QueryException.UnsupportedPredicateException If predicate is not supported by [Index].
      */
-    @ExperimentalUnsignedTypes
     override fun filter(predicate: Predicate, tx: Entity.Tx): Recordset {
         require(canProcess(predicate)) {"The supplied predicate $predicate cannot be processed by index ${this.name}"}
         LOGGER.info("${this.name} Filtering")
@@ -328,9 +333,14 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
 
         // get exact distances...
         LOGGER.info("Re-ranking $approxK signature matches with exact distances.")
-        val knnsExact = knns.mapIndexed { i, knn ->
-            var numTids = 0
+        val knnsExact = knns.map { _ ->
             val knnNew = if (p.k == 1) MinSingleSelection<ComparablePair<Long, DoubleValue>>() else MinHeapSelection<ComparablePair<Long, DoubleValue>>(p.k)
+            knnNew
+        }
+        knnsExact.indices.toList().parallelStream().forEach { i ->
+            var numTids = 0
+            val knnNew = knnsExact[i]
+            val knn = knns[i]
             (0 until knn.size).forEach {
                 val tIds = knn[it].first
                 tIds.forEach { tid ->
@@ -340,10 +350,9 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
                 }
             }
             LOGGER.trace("Considered $numTids after approximation scan for query $i")
-            knnNew
         }
         LOGGER.info("Done")
-        return KnnUtilities.selectToRecordset(this.produces.first(), knnsExact.toList())
+        return KnnUtilities.selectToRecordset(this.produces.first(), knnsExact)
     }
 
 
@@ -351,11 +360,16 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
     private fun scanQueriesSign(p: KnnPredicate<*>, pqReal: PQ, k: Int = p.k): List<Selection<ComparablePair<LongArray, Float>>> {
         LOGGER.debug("Converting signature array")
         val sigLength = config.numSubspaces
+        // todo:
+        //  * this does not necessarily have to happen at query time! -> move to before
+        //  * use adaptable size (UByte for nc <= 128? Custom via Long plus pad?
+        //  * For nc 2048-4096 (11-12bits) we can fit 5 points into one long (64 bits). Savings compared to UShort: 20%)
+        //  * For 10 bits, we can fit 6 -> 33% saving
         val sigReIm = UShortArray(signatures.size * sigLength) {
             signatures[it / (sigLength)][it % (sigLength)].toUShort()
         }
         LOGGER.debug("Done.")
-        val knnQueries = p.query.mapIndexed { i, q_ ->
+        val knnQueries = p.query.mapIndexed { _, q_ ->
             val q = q_ as Complex32VectorValue
             (if (k == 1) MinSingleSelection<ComparablePair<LongArray, Float>>() else MinHeapSelection<ComparablePair<LongArray, Float>>(k)) to q
         }
