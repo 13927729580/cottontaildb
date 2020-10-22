@@ -266,7 +266,7 @@ class PQCodebook<T: VectorValue<*>> (val centroids: Array<T>, val inverseDataCov
                 val v = diff[i] * ip
                 dist += v
             }
-            check(dist.imaginary.abs().value.toDouble() < 1e-5)
+            check(dist.imaginary.value.toDouble().absoluteValue < 1e-5)
             return dist.real.value.toDouble()
         }
 

@@ -30,7 +30,10 @@ import org.vitrivr.cottontail.model.values.types.VectorValue
 import org.vitrivr.cottontail.utilities.extensions.write
 import java.nio.file.Path
 import java.util.*
+import java.util.concurrent.Callable
+import java.util.concurrent.Executors
 import kotlin.collections.HashMap
+import kotlin.collections.HashSet
 
 /**
  * author: Gabriel Zihlmann
@@ -225,14 +228,10 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
         // now get and add signatures for elements not in learning set
         LOGGER.info("Generating signatures for all vectors...")
         val learningTIdsSet = learningTIds.toHashSet() // convert to hash set for O(1) lookup
-        var done = 0
-        tx.forEach {  r ->
-            if (done % 1000000 == 0) LOGGER.info("$done elements processed")
-            done++
-            if (learningTIdsSet.contains(r.tupleId))
-                return@forEach
-            val sig = this.pq.getSignature(r[columns[0]] as VectorValue<*>).toList()
-            signaturesTidsLoc.getOrPut(sig) { mutableListOf() }.add(r.tupleId)
+        val tidsSignatures = findSignaturesParallel(tx, learningTIdsSet)
+        LOGGER.trace("Done generating signatures for all vectors. Adding to map.")
+        tidsSignatures.forEach { (tid, sig) ->
+            signaturesTidsLoc.getOrPut(sig.toList()) { mutableListOf() }.add(tid)
         }
         LOGGER.info("Done. Storing signatures.")
         // map to intArray for storing. We need to use List<Int> in kotlin code to compare signatures
@@ -245,6 +244,38 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
         loadSignaturesFromDisk()
         LOGGER.info("Done.")
         LOGGER.info("PQIndex rebuild done.")
+    }
+
+    private fun findSignaturesParallel(tx: Entity.Tx, ignoreTids: HashSet<Long>): List<Pair<Long, IntArray>> {
+        fun findSignatures(tx: Entity.Tx, startTid: Long, endTidInclusive: Long, ignoreTids: HashSet<Long>): List<Pair<Long, IntArray>> {
+            LOGGER.trace("Finding signatures to tids from $startTid to $endTidInclusive (inclusive).")
+            val res = mutableListOf<Pair<Long, IntArray>>()
+            tx.forEach(startTid, endTidInclusive) { r ->
+                if (!ignoreTids.contains(r.tupleId)) {
+                    val signature = this.pq.getSignature(r[columns[0]] as VectorValue<*>)
+                    res.add(r.tupleId to signature)
+                }
+            }
+            LOGGER.trace("Done.")
+            return res.toList()
+        }
+        val numThreads = Runtime.getRuntime().availableProcessors()
+        // i guess we start counting at 0 -> we could have up to maxTupleId + 1 elements...
+        val maxTupleId = tx.maxTupleId()
+        val elemsPerThread = (maxTupleId + 1) / numThreads
+        val remaining = (maxTupleId + 1) % numThreads
+        val exec = Executors.newFixedThreadPool(numThreads)
+        val tasks = (0 until numThreads).map { thread ->
+            Callable {
+                findSignatures(tx,
+                        thread * elemsPerThread,
+                        thread * elemsPerThread + elemsPerThread - 1 + if (thread == numThreads - 1) remaining else 0,
+                                ignoreTids)}
+        }
+        val fresults = exec.invokeAll(tasks)
+        val res = fresults.map { it.get()}
+        exec.shutdownNow()
+        return res.flatten()
     }
 
     private fun permuteSplitComplexRecord(r: Record): Pair<DoubleArray, DoubleArray> {
