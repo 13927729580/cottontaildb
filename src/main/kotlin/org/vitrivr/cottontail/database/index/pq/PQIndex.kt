@@ -249,7 +249,14 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
         LOGGER.info("Loading signatures from disk.")
         loadSignaturesFromDisk()
         LOGGER.info("Done.")
-        LOGGER.info("PQIndex rebuild done.")
+        // some statistics:
+        val tIdsPerSignatureDistribution = mutableMapOf<Int, Int>()
+        signaturesTidsLoc.forEach { sig, tIds ->
+            tIdsPerSignatureDistribution[tIds.size] = tIdsPerSignatureDistribution.getOrDefault(tIds.size, 0) + 1
+//            tIdsPerSignatureDistribution.getOrPut(tIds.size) { 0 }.inc() // would this work?
+        }
+        LOGGER.info("PQIndex rebuild done. Have ${signatures.size} unique signatures.")
+        LOGGER.info("Size distribution (size:numSignatures): ${tIdsPerSignatureDistribution.map { (k, v) -> "$k:$v" }.joinToString()}")
     }
 
     private fun findSignaturesParallel(tx: Entity.Tx, ignoreTids: HashSet<Long>): List<Pair<Long, IntArray>> {
