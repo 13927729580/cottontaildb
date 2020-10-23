@@ -8,4 +8,5 @@ enum class PQIndexConfigParamMapKeys(val key: String) {
     K_APPROX_SCAN("k_approx_scan"), // todo: this as well!
     SEED("seed"),
     TYPE("type"),
+    COMPLEX_STRATEGY("complex_strategy"), // direct or split to real & imag
 }

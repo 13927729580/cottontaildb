@@ -1,10 +1,7 @@
 package org.vitrivr.cottontail.model.values
 
 import org.apache.commons.math3.util.FastMath
-import org.vitrivr.cottontail.model.values.types.ComplexVectorValue
-import org.vitrivr.cottontail.model.values.types.NumericValue
-import org.vitrivr.cottontail.model.values.types.Value
-import org.vitrivr.cottontail.model.values.types.VectorValue
+import org.vitrivr.cottontail.model.values.types.*
 import java.util.*
 import kotlin.math.atan2
 import kotlin.math.pow
@@ -81,8 +78,25 @@ inline class Complex32VectorValue(val data: FloatArray) : ComplexVectorValue<Flo
      * @return The value at index i.
      */
     override fun get(i: Int) = Complex32Value(this.data[i shl 1], this.data[(i shl 1) + 1])
+    override fun get(start: Int, length: Int) = if (length == logicalSize) this
+    else {
+        Complex32VectorValue(FloatArray(length shl 1) {
+            data[(start shl 1) + it]
+        })
+    }
+    override fun real(): RealVectorValue<Float> = FloatVectorValue(
+            FloatArray(logicalSize) {
+                data[it shl 1]
+            }
+    )
     override fun real(i: Int) = FloatValue(this.data[i shl 1])
     override fun imaginary(i: Int) = FloatValue(this.data[(i shl 1) + 1])
+
+    override fun imaginary() = FloatVectorValue(
+        FloatArray(logicalSize) {
+            data[(it shl 1) + 1]
+        }
+    )
 
     override fun compareTo(other: Value): Int {
         throw IllegalArgumentException("ComplexVectorValues can can only be compared for equality.")
@@ -151,10 +165,6 @@ inline class Complex32VectorValue(val data: FloatArray) : ComplexVectorValue<Flo
                 }
             }
         })
-
-    override fun minus(other: VectorValue<*>) = if (this.logicalSize == other.logicalSize)
-         minus(other, 0, 0, logicalSize)
-    else throw IllegalArgumentException("Dimensions ${this.logicalSize} and ${other.logicalSize} don't agree!")
 
     override fun times(other: VectorValue<*>) = if (other.logicalSize == this.logicalSize)
         Complex32VectorValue(when (other) {
@@ -446,16 +456,6 @@ inline class Complex32VectorValue(val data: FloatArray) : ComplexVectorValue<Flo
     }
 
     /**
-     * Calculates the complex dot product between this [Complex32VectorValue] and another [VectorValue].
-     *
-     * @param other The other [VectorValue].
-     * @return [Complex32Value] dot product of this and the other vector.
-     */
-    override fun dot(other: VectorValue<*>): Complex32Value = if (other.logicalSize == this.logicalSize)
-        dot(other, 0, 0, logicalSize)
-    else throw IllegalArgumentException("Dimensions ${this.logicalSize} and ${other.logicalSize} don't agree!")
-
-    /**
      * Calculates the complex L2 norm of this [Complex64VectorValue].
      *
      * @return Complex L2 norm of this [Complex64VectorValue]
@@ -504,18 +504,4 @@ inline class Complex32VectorValue(val data: FloatArray) : ComplexVectorValue<Flo
             DoubleValue(sum)
         }
     } else throw IllegalArgumentException("Dimensions ${this.logicalSize} and ${other.logicalSize} don't agree!")
-
-    /**
-     * Returns the subvector of length [length] starting from [start] of this [ComplexVectorValue].
-     *
-     * @param start Index of the first entry of the returned vector.
-     * @param length how many elements, including start, to return
-     * @return The subvector starting at index start containing length elements. Or original object if length == size.
-     */
-    override fun get(start: Int, length: Int) = if (length == logicalSize) this
-        else {
-            Complex32VectorValue(FloatArray(length shl 1) {
-                data[(start shl 1) + it]
-            })
-    }
 }

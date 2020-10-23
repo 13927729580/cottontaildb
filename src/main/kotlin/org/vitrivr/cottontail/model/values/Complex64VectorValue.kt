@@ -81,7 +81,18 @@ inline class Complex64VectorValue(val data: DoubleArray) : ComplexVectorValue<Do
      * @return The value at index i.
      */
     override fun get(i: Int) = Complex64Value(this.data[i shl 1], this.data[(i shl 1) + 1])
+    override fun real() = DoubleVectorValue(
+        DoubleArray(logicalSize) {
+            data[it shl 1]
+        }
+    )
     override fun real(i: Int) = DoubleValue(this.data[i shl 1])
+
+    override fun imaginary() = DoubleVectorValue(
+            DoubleArray(logicalSize) {
+                data[(it shl 1) + 1]
+            }
+    )
     override fun imaginary(i: Int) = DoubleValue(this.data[(i shl 1) + 1])
 
     override fun compareTo(other: Value): Int {
@@ -161,10 +172,6 @@ inline class Complex64VectorValue(val data: DoubleArray) : ComplexVectorValue<Do
                 }
             }
         })
-
-    override fun minus(other: VectorValue<*>) = if (other.logicalSize == this.logicalSize)
-        minus(other, 0, 0, logicalSize)
-    else throw IllegalArgumentException("Dimensions ${this.logicalSize} and ${other.logicalSize} don't agree!")
 
     override fun times(other: VectorValue<*>) = if (other.logicalSize == this.logicalSize)
         Complex64VectorValue(when (other) {
@@ -466,16 +473,6 @@ inline class Complex64VectorValue(val data: DoubleArray) : ComplexVectorValue<Do
             Complex64Value(real, imaginary)
         }
     }
-
-    /**
-     * Calculates the complex dot product between this [Complex64VectorValue] and another [VectorValue].
-     *
-     * @param other The other [VectorValue].
-     * @return [Complex64Value] dot product of this and the other vector.
-     */
-    override fun dot(other: VectorValue<*>): Complex64Value = if (other.logicalSize == this.logicalSize)
-        dot(other, 0, 0, logicalSize)
-    else throw IllegalArgumentException("Dimensions ${this.logicalSize} and ${other.logicalSize} don't agree!")
 
     /**
      * Calculates the real part of the dot product between this [Complex64VectorValue] and another [VectorValue].

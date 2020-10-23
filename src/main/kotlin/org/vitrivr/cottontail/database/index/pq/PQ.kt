@@ -6,16 +6,15 @@ import org.mapdb.DataInput2
 import org.mapdb.DataOutput2
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
-import org.vitrivr.cottontail.database.column.ColumnType
-import org.vitrivr.cottontail.database.column.Complex32VectorColumnType
-import org.vitrivr.cottontail.database.column.Complex64VectorColumnType
-import org.vitrivr.cottontail.database.column.DoubleVectorColumnType
+import org.vitrivr.cottontail.database.column.*
 import org.vitrivr.cottontail.database.serializers.FixedComplex32VectorSerializer
 import org.vitrivr.cottontail.database.serializers.FixedComplex64VectorSerializer
 import org.vitrivr.cottontail.database.serializers.FixedDoubleVectorSerializer
+import org.vitrivr.cottontail.database.serializers.FixedFloatVectorSerializer
 import org.vitrivr.cottontail.model.values.Complex32VectorValue
 import org.vitrivr.cottontail.model.values.Complex64VectorValue
 import org.vitrivr.cottontail.model.values.DoubleVectorValue
+import org.vitrivr.cottontail.model.values.FloatVectorValue
 import org.vitrivr.cottontail.model.values.types.ComplexVectorValue
 import org.vitrivr.cottontail.model.values.types.NumericValue
 import org.vitrivr.cottontail.model.values.types.RealVectorValue
@@ -140,6 +139,7 @@ class PQ(val codebooks: Array<PQCodebook<out VectorValue<*>>>, val type: ColumnT
                         is Complex32VectorColumnType -> value.type.serializer(value.dimensionsPerSubspace).serialize(out, c as Complex32VectorValue)
                         is Complex64VectorColumnType -> value.type.serializer(value.dimensionsPerSubspace).serialize(out, c as Complex64VectorValue)
                         is DoubleVectorColumnType -> value.type.serializer(value.dimensionsPerSubspace).serialize(out, c as DoubleVectorValue)
+                        is FloatVectorColumnType -> value.type.serializer(value.dimensionsPerSubspace).serialize(out, c as FloatVectorValue)
                         else -> TODO("Other types not yet supported")
                     }
                 }
@@ -149,6 +149,7 @@ class PQ(val codebooks: Array<PQCodebook<out VectorValue<*>>>, val type: ColumnT
                         is Complex32VectorColumnType -> FixedComplex32VectorSerializer(value.dimensionsPerSubspace).serialize(out, cov[i] as Complex32VectorValue)
                         is Complex64VectorColumnType -> FixedComplex64VectorSerializer(value.dimensionsPerSubspace).serialize(out, cov[i] as Complex64VectorValue)
                         is DoubleVectorColumnType -> FixedDoubleVectorSerializer(value.dimensionsPerSubspace).serialize(out, cov[i] as DoubleVectorValue)
+                        is FloatVectorColumnType -> FixedFloatVectorSerializer(value.dimensionsPerSubspace).serialize(out, cov[i] as FloatVectorValue)
                         else -> TODO("Other types not yet supported")
                     }
                 }
@@ -254,63 +255,30 @@ class PQ(val codebooks: Array<PQCodebook<out VectorValue<*>>>, val type: ColumnT
 //        )
     }
 
-    fun precomputeCentroidQueryIPComplexVectorValue(permutedQuery: ComplexVectorValue<*>): PQCentroidQueryIPComplexVectorValue {
+    fun precomputeCentroidQueryIPComplexVectorValue(query: ComplexVectorValue<*>): PQCentroidQueryIPComplexVectorValue {
         return PQCentroidQueryIPComplexVectorValue(Array(numSubspaces) { k ->
             Complex32VectorValue(Array(numCentroids) { i ->
-                permutedQuery.dot(codebooks[k].centroids[i], k * dimensionsPerSubspace, 0, dimensionsPerSubspace).asComplex32()
+                query.dot(codebooks[k].centroids[i], k * dimensionsPerSubspace, 0, dimensionsPerSubspace).asComplex32()
             })
         })
     }
 
-    fun precomputeCentroidQueryIPFloat(permutedQuery: DoubleArray): PQCentroidQueryIPFloat {
-        TODO()
-//        return PQCentroidQueryIPFloat(Array(numSubspaces) { k ->
-//            FloatArray(numCentroids) { i ->
-//                var ip = 0.0F
-//                for (j in 0 until dimensionsPerSubspace) {
-//                    ip += (permutedQuery[k * dimensionsPerSubspace + j] * codebooks[k].centroids[i][j]).toFloat()
-//                }
-//                ip
-//            }
-//        }
-//        )
+
+    fun precomputeCentroidQueryRealIPFloat(query: Complex32VectorValue): PQCentroidQueryIPFloat {
+        return PQCentroidQueryIPFloat(Array(numSubspaces) { k ->
+            FloatArray(numCentroids) { i ->
+                query.real().dot(codebooks[k].centroids[i], k * dimensionsPerSubspace, 0, dimensionsPerSubspace).real.value.toFloat()
+            }
+        }
+        )
     }
 
-    /*
-    reversePermutation: intArray holding at index i the index of the dimension in the original space
-    so: i is in "permuted space", the value in the array is where it was in the unpermuted space -> call it
-    reversePermutation
-     */
-    fun precomputeCentroidQueryRealIPFloat(unPermutedQuery: Complex32VectorValue, reversePermutation: IntArray): PQCentroidQueryIPFloat {
-        TODO()
-//        return PQCentroidQueryIPFloat(Array(numSubspaces) { k ->
-//            FloatArray(numCentroids) { i ->
-//                var ip = 0.0F
-//                for (j in 0 until dimensionsPerSubspace) {
-//                    ip += (unPermutedQuery[reversePermutation[k * dimensionsPerSubspace + j]].real.value * codebooks[k].centroids[i][j]).toFloat()
-//                }
-//                ip
-//            }
-//        }
-//        )
-    }
-
-    /*
-    reversePermutation: intArray holding at index i the index of the dimension in the original space
-    so: i is in "permuted space", the value in the array is where it was in the unpermuted space -> call it
-    reversePermutation
-     */
-    fun precomputeCentroidQueryImagIPFloat(unPermutedQuery: Complex32VectorValue, reversePermutation: IntArray): PQCentroidQueryIPFloat {
-        TODO()
-//        return PQCentroidQueryIPFloat(Array(numSubspaces) { k ->
-//            FloatArray(numCentroids) { i ->
-//                var ip = 0.0F
-//                for (j in 0 until dimensionsPerSubspace) {
-//                    ip += (unPermutedQuery[reversePermutation[k * dimensionsPerSubspace + j]].imaginary.value * codebooks[k].centroids[i][j]).toFloat()
-//                }
-//                ip
-//            }
-//        }
-//        )
+    fun precomputeCentroidQueryImagIPFloat(query: Complex32VectorValue): PQCentroidQueryIPFloat {
+        return PQCentroidQueryIPFloat(Array(numSubspaces) { k ->
+            FloatArray(numCentroids) { i ->
+                query.imaginary().dot(codebooks[k].centroids[i], k * dimensionsPerSubspace, 0, dimensionsPerSubspace).value.toFloat()
+            }
+        }
+        )
     }
 }

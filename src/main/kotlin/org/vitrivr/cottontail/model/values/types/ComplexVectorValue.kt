@@ -36,6 +36,8 @@ interface ComplexVectorValue<T: Number> : VectorValue<T>, Iterable<ComplexValue<
      */
     fun real(i: Int): RealValue<T>
 
+    fun real(): RealVectorValue<T>
+
     /**
      * Gets the imaginary part of the i-th entry of this [ComplexVectorValue].
      *
@@ -43,6 +45,8 @@ interface ComplexVectorValue<T: Number> : VectorValue<T>, Iterable<ComplexValue<
      * @return The imaginary component of the i-th entry in this [ComplexVectorValue]
      */
     fun imaginary(i: Int): RealValue<T>
+
+    fun imaginary(): RealVectorValue<T>
 
     /**
      * Creates and returns an [Iterator] for the values held by this [ComplexVectorValue].
@@ -74,7 +78,9 @@ interface ComplexVectorValue<T: Number> : VectorValue<T>, Iterable<ComplexValue<
      * @param other The [VectorValue] to subtract from this [ComplexVectorValue].
      * @return [ComplexVectorValue] that contains the element-wise difference of the two input [VectorValue]s
      */
-    override fun minus(other: VectorValue<*>): ComplexVectorValue<T>
+    override operator fun minus(other: VectorValue<*>) = if (this.logicalSize == other.logicalSize)
+        minus(other, 0, 0, logicalSize)
+    else throw IllegalArgumentException("Dimensions ${this.logicalSize} and ${other.logicalSize} don't agree!")
 
     /**
      * Calculates the element-wise product of this and the other [VectorValue].
@@ -100,7 +106,10 @@ interface ComplexVectorValue<T: Number> : VectorValue<T>, Iterable<ComplexValue<
      *
      * @return Sum of the elements of this [VectorValue].
      */
-    override fun dot(other: VectorValue<*>): ComplexValue<*>
+
+    override infix fun dot(other: VectorValue<*>) = if (other.logicalSize == this.logicalSize)
+        dot(other, 0, 0, logicalSize)
+    else throw IllegalArgumentException("Dimensions ${this.logicalSize} and ${other.logicalSize} don't agree!")
 
     /**
      * Calculates the element-wise difference of this and the other [VectorValue]. Subvectors can be defined by the

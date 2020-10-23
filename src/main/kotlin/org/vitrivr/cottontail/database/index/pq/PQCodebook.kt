@@ -10,10 +10,7 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.vitrivr.cottontail.database.index.pq.clustering.KMeansClustererComplex
 import org.vitrivr.cottontail.model.values.*
-import org.vitrivr.cottontail.model.values.types.ComplexValue
-import org.vitrivr.cottontail.model.values.types.ComplexVectorValue
-import org.vitrivr.cottontail.model.values.types.RealVectorValue
-import org.vitrivr.cottontail.model.values.types.VectorValue
+import org.vitrivr.cottontail.model.values.types.*
 import java.util.*
 import kotlin.IllegalArgumentException
 import kotlin.math.absoluteValue
@@ -194,7 +191,7 @@ class PQCodebook<T: VectorValue<*>> (val centroids: Array<T>, val inverseDataCov
                 val b_ = Complex64VectorValue(Array(b.size / 2) {
                     Complex64Value(b[it * 2], b[it * 2 + 1])
                 })
-                val d = 1.0 - a_.dot(b_).abs().value
+                val d = 1.0 - a_.dot(b_).abs().value.toDouble()
                 check(d >= -1e-5) {"Distance must be >= 0 but was $d"}
                 d.coerceAtLeast(0.0)
             }
@@ -254,10 +251,12 @@ class PQCodebook<T: VectorValue<*>> (val centroids: Array<T>, val inverseDataCov
         inline fun mahalanobisSqOpt(a: VectorValue<*>, aStart: Int, length: Int, b: VectorValue<*>, bStart: Int, inverseDataCovMatrix: Array<out VectorValue<*>>): Double {
             require(inverseDataCovMatrix.size == length)
             require(inverseDataCovMatrix[0].logicalSize == length)
-            var dist: ComplexValue<*> = when (val t = a::class.java) {
+            var dist: NumericValue<*> = when (val t = a::class.java) {
                 Complex32VectorValue::class.java -> Complex32Value(FloatArray(2))
                 Complex64VectorValue::class.java -> Complex64Value(DoubleArray(2))
-                else -> error("Unknown type $t")
+                DoubleVectorValue::class.java -> DoubleValue(0.0)
+                FloatVectorValue::class.java -> FloatValue(0.0f)
+                else -> error("Unknown type '$t'")
             }
 
             val diff = a.minus(b, aStart, bStart, length)
