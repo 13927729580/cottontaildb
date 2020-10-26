@@ -3,10 +3,7 @@ package org.vitrivr.cottontail.database.index.pq
 import org.mapdb.DBMaker
 import org.mapdb.Serializer
 import org.slf4j.LoggerFactory
-import org.vitrivr.cottontail.database.column.ColumnType
-import org.vitrivr.cottontail.database.column.Complex32VectorColumnType
-import org.vitrivr.cottontail.database.column.DoubleVectorColumnType
-import org.vitrivr.cottontail.database.column.FloatVectorColumnType
+import org.vitrivr.cottontail.database.column.*
 import org.vitrivr.cottontail.database.entity.Entity
 import org.vitrivr.cottontail.database.events.DataChangeEvent
 import org.vitrivr.cottontail.database.index.Index
@@ -128,7 +125,7 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
             if (cod == null) {
 //                throw StoreException("No config supplied but the config from disk was null!")
                 LOGGER.warn("No config supplied, but the config from disk was null!! Using a dummy config. Please consider this index invalid!")
-                this.config = PQIndexConfig(1, 1, 5e-3, LookupTablePrecision.SINGLE, 100, 1234L, Complex32VectorColumnType, PQIndexConfig.ComplexStrategy.DIRECT)
+                this.config = PQIndexConfig(1, 1, 5e-3, PQIndexConfig.Precision.SINGLE, 100, 1234L, PQIndexConfig.ComplexStrategy.DIRECT)
             } else {
                 this.config = cod
             }
@@ -230,14 +227,27 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
                 this.add(Pair(r[columns[0]] as VectorValue<*>, r.tupleId)) // todo: get rid of intermediary pairs... We need to know the number of records for that (which we can do now because we need to filter manually...)
             }
         }.unzip()
-        val (preProcessedLearningData, preProcessedLearningDataImag, type) = if (config.complexStrategy == PQIndexConfig.ComplexStrategy.SPLIT) {
-            learningData.map {
-                it as ComplexVectorValue<*>
-                it.real() to it.imaginary()
-            }.unzip().let { Triple(it.first, it.second, if (config.type is Complex32VectorColumnType) {FloatVectorColumnType} else {DoubleVectorColumnType}) }
-        }
-        else {
-            Triple(learningData, null, config.type)
+        val (preProcessedLearningData, preProcessedLearningDataImag, type) = when (config.complexStrategy) {
+            PQIndexConfig.ComplexStrategy.SPLIT -> {
+                val (preProcessedLearningData, preProcessedLearningDataImag) = learningData.map {
+                    it as ComplexVectorValue<*>
+                    it.real() to it.imaginary()
+                }.unzip()
+                val type = when (config.precision) {
+                    PQIndexConfig.Precision.SINGLE -> {
+                        FloatVectorColumnType
+                    }
+                    PQIndexConfig.Precision.DOUBLE -> {
+                        DoubleVectorColumnType
+                    }
+                }
+                Triple(preProcessedLearningData, preProcessedLearningDataImag, type)
+            }
+            PQIndexConfig.ComplexStrategy.DIRECT -> {
+                Triple(learningData, null, when (config.precision) {
+                    PQIndexConfig.Precision.SINGLE -> Complex32VectorColumnType; PQIndexConfig.Precision.DOUBLE -> Complex64VectorColumnType
+                })
+            }
         }
 
         LOGGER.info("Learning with ${learningTIds.size} vectors...")

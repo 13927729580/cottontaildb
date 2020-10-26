@@ -8,10 +8,9 @@ import org.vitrivr.cottontail.model.values.types.VectorValue
 data class PQIndexConfig (val numSubspaces: Int,
                           val numCentroids: Int,
                           val learningDataFraction: Double,
-                          val lookuptablePrecision: LookupTablePrecision,
+                          val precision: Precision,
                           val kApproxScan: Int,
                           val seed: Long,
-                          val type: ColumnType<out VectorValue<*>>,
                           val complexStrategy: ComplexStrategy
                           ) {
     companion object Serializer: org.mapdb.Serializer<PQIndexConfig> {
@@ -28,10 +27,9 @@ data class PQIndexConfig (val numSubspaces: Int,
             out.packInt(value.numSubspaces)
             out.packInt(value.numCentroids)
             out.writeDouble(value.learningDataFraction)
-            out.packInt(value.lookuptablePrecision.ordinal)
+            out.packInt(value.precision.ordinal)
             out.packInt(value.kApproxScan)
             out.packLong(value.seed)
-            out.writeUTF(value.type.name)
             out.packInt(value.complexStrategy.ordinal)
         }
 
@@ -50,10 +48,9 @@ data class PQIndexConfig (val numSubspaces: Int,
             = PQIndexConfig(input.unpackInt(),
                 input.unpackInt(),
                 input.readDouble(),
-                LookupTablePrecision.values()[input.unpackInt()],
+                Precision.values()[input.unpackInt()],
                 input.unpackInt(),
                 input.unpackLong(),
-                ColumnType.forName(input.readUTF()) as ColumnType<out VectorValue<*>>, // todo: change to precision because we want to easily find the corresponding real vector type to a given complex vector type...
                 ComplexStrategy.values()[input.unpackInt()]
         )
 
@@ -63,15 +60,18 @@ data class PQIndexConfig (val numSubspaces: Int,
                         numSubspaces = (params[PQIndexConfigParamMapKeys.NUM_SUBSPACES.key] ?: error("num_subspaces not found")).toInt(),
                         numCentroids = (params[PQIndexConfigParamMapKeys.NUM_CENTROIDS.key] ?: error("num_centroids not found")).toInt(),
                         learningDataFraction = (params[PQIndexConfigParamMapKeys.LEARNING_DATA_FRACTION.key] ?: error("learning_data_fraction not found")).toDouble(),
-                        lookuptablePrecision = LookupTablePrecision.valueOf(params[PQIndexConfigParamMapKeys.LOOKUPTABLE_PRECISION.key] ?: error("lookuptable_precision not found")),
+                        precision = Precision.valueOf(params[PQIndexConfigParamMapKeys.PRECISION.key] ?: error("precision not found")),
                         kApproxScan = (params[PQIndexConfigParamMapKeys.K_APPROX_SCAN.key] ?: error("k_approx_scan not found")).toInt(),
                         seed = (params[PQIndexConfigParamMapKeys.SEED.key] ?: error("seed not found")).toLong(),
-                        type = ColumnType.forName(params[PQIndexConfigParamMapKeys.TYPE.key] ?: error("type not found")) as ColumnType<out VectorValue<*>>,
                         complexStrategy = ComplexStrategy.valueOf(params[PQIndexConfigParamMapKeys.COMPLEX_STRATEGY.key] ?: error("complex_strategy not found")),
                 )
     }
 
     enum class ComplexStrategy {
         DIRECT, SPLIT
+    }
+
+    enum class Precision {
+        SINGLE, DOUBLE
     }
 }
