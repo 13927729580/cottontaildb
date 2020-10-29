@@ -157,14 +157,14 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
     private fun loadSignaturesFromDisk() {
         signatures.clear()
         tIds.clear()
-        LOGGER.info("Index ${name.simple} loading Signatures from store")
+        LOGGER.debug("Index ${name.simple} loading Signatures from store")
         val expectedSignatureSize = config.numSubspaces * when(config.complexStrategy) { PQIndexConfig.ComplexStrategy.DIRECT -> 1; PQIndexConfig.ComplexStrategy.SPLIT -> 2}
         signaturesStore.forEach { (signature, tIds_) ->
             check(signature.size == expectedSignatureSize) { "Loaded a signature [${signature.joinToString(separator = ",")}] with unexpected signature size (${signature.size} instead of $expectedSignatureSize)."}
             signatures.add(signature!!)
             tIds.add(tIds_)
         }
-        LOGGER.info("Done loading.")
+        LOGGER.debug("Done loading.")
         if (signatures.size > 0) {
             logSignatureStatistics()
         }
@@ -177,11 +177,11 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
             tIdsPerSignatureDistribution[tIds1.size] = tIdsPerSignatureDistribution.getOrDefault(tIds1.size, 0) + 1
 //            tIdsPerSignatureDistribution.getOrPut(tIds.size) { 0 }.inc() // would this work?
         }
-        LOGGER.info("${signatures.size} unique signatures.")
-        LOGGER.info("Most Common Signature has ${tIds.maxOf { it.size }} tIds.")
-        LOGGER.info("Least Common Signature has ${tIds.minOf { it.size }} tIds.")
+        LOGGER.debug("${signatures.size} unique signatures.")
+        LOGGER.debug("Most Common Signature has ${tIds.maxOf { it.size }} tIds.")
+        LOGGER.debug("Least Common Signature has ${tIds.minOf { it.size }} tIds.")
         val largestFirst = tIdsPerSignatureDistribution.toSortedMap(compareBy { -it })
-        LOGGER.info("Complete Size distribution (numTIdsPerSignature:numSignatures): ${largestFirst.map { (k, v) -> "$k:$v" }.joinToString()}")
+        LOGGER.debug("Complete Size distribution (numTIdsPerSignature:numSignatures): ${largestFirst.map { (k, v) -> "$k:$v" }.joinToString()}")
     }
 
     /**
@@ -233,7 +233,7 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
     override fun rebuild(tx: Entity.Tx) {
         //todo: don't copy data
         LOGGER.info("Rebuilding PQIndex.")
-        LOGGER.info("Preparing data.")
+        LOGGER.debug("Preparing data.")
         // because tx doesn't have a simple .filter method where we can specify any old boolean, we need to
         // roll our own...
         // this filters the elements randomly based on the learning fraction and permutes them
@@ -269,7 +269,7 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
             }
         }
 
-        LOGGER.info("Learning from ${learningTIds.size} vectors...")
+        LOGGER.debug("Learning from ${learningTIds.size} vectors...")
         val (pq, signatures) = PQ.fromPermutedData(config.numSubspaces, config.numCentroids, preProcessedLearningData.toTypedArray(), type)
         this.pq = pq
         pqStore.set(pq)
@@ -281,7 +281,7 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
                 }
             }
             PQIndexConfig.ComplexStrategy.SPLIT -> {
-                LOGGER.info("Learning imaginary part from ${learningTIds.size} vectors...")
+                LOGGER.debug("Learning imaginary part from ${learningTIds.size} vectors...")
                 val (pqImag, signaturesImag) = PQ.fromPermutedData(config.numSubspaces, config.numCentroids, preProcessedLearningDataImag!!.toTypedArray(), type)
                 this.pqImag = pqImag
                 pqStoreImag.set(pqImag)
@@ -291,25 +291,25 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
                 }
             }
         }
-        LOGGER.info("Learning done.")
+        LOGGER.debug("Learning done.")
         // now get and add signatures for elements not in learning set
-        LOGGER.info("Generating signatures for all vectors...")
+        LOGGER.debug("Generating signatures for all vectors...")
         val learningTIdsSet = learningTIds.toHashSet() // convert to hash set for O(1) lookup
         val tidsSignatures = findSignaturesParallel(tx, learningTIdsSet)
         LOGGER.trace("Done generating signatures for all vectors. Adding to map.")
         tidsSignatures.forEach { (tid, sig) ->
             signaturesTidsLoc.getOrPut(sig) { mutableListOf() }.add(tid)
         }
-        LOGGER.info("Done. Storing signatures.")
+        LOGGER.debug("Done. Storing signatures.")
         // map to intArray for storing. We need to use List<Int> in kotlin code to compare signatures
         // structurally (IntArray is only compared by ref)
         signaturesStore.clear()
         signaturesStore.putAll(signaturesTidsLoc.map { (k, v) -> k.toIntArray() to v.toLongArray()}.toMap())
-        LOGGER.info("Done generating and storing signatures. Committing.")
+        LOGGER.debug("Done generating and storing signatures. Committing.")
         db.commit()
-        LOGGER.info("Loading signatures from disk.")
+        LOGGER.debug("Loading signatures from disk.")
         loadSignaturesFromDisk()
-        LOGGER.info("Done.")
+        LOGGER.info("PQ rebuild Done.")
         // todo: check if we're really done porting this function to work in SPLIT mode...
     }
 
@@ -390,7 +390,7 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
      */
     override fun filter(predicate: Predicate, tx: Entity.Tx): Recordset {
         require(canProcess(predicate)) {"The supplied predicate $predicate cannot be processed by index ${this.name}"}
-        LOGGER.info("${this.name} Filtering")
+        LOGGER.info("Index '${this.name}' Filtering")
         val p = predicate as KnnPredicate<*>
 
         LOGGER.debug("Converting signature array")
@@ -417,7 +417,7 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
         // get exact distances...
         // todo: consider merging scan and exact re-ranking.
         //       * we would not accumulate large knn objects that could use a lot of memory when going to large ks
-        LOGGER.info("Re-ranking $approxK signature matches with exact distances.")
+        LOGGER.debug("Re-ranking $approxK signature matches with exact distances.")
         val knnsExact = knns.map {
             val knnNew = if (p.k == 1) MinSingleSelection<ComparablePair<Long, DoubleValue>>() else MinHeapSelection(p.k)
             knnNew
@@ -434,15 +434,18 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
                     knnNew.offer(ComparablePair(tid, p.distance(exact, p.query[i])))
                 }
             }
-            LOGGER.trace("Considered $numTids after approximation scan for query $i")
+            if (LOGGER.isTraceEnabled) {
+                LOGGER.trace("Considered $numTids after approximation scan for query $i")
+            }
         }
-        LOGGER.info("Done")
+        LOGGER.info("Done filtering")
         return KnnUtilities.selectToRecordset(this.produces.first(), knnsExact)
     }
 
 
     @ExperimentalUnsignedTypes
     private fun scan(p: KnnPredicate<*>, pq1: PQ, sigReIm: UShortArray, sigLength: Int, k: Int = p.k): List<Selection<ComparablePair<LongArray, Float>>> {
+        LOGGER.debug("Scanning in DIRECT mode.")
         val knnQueries = p.query.mapIndexed { _, q_ ->
             val q = q_ as Complex32VectorValue
             (if (k == 1) MinSingleSelection<ComparablePair<LongArray, Float>>() else MinHeapSelection(k)) to q
@@ -452,7 +455,7 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
             knnQueries.chunked(chunksize).parallelStream().forEach { knnQueriesChunk ->
                 if (LOGGER.isTraceEnabled) LOGGER.trace("Precomputing IPs between query and centroids")
                 val queryCentroidIP = Array(knnQueriesChunk.size) { pq1.precomputeCentroidQueryIPComplexVectorValue(knnQueriesChunk[it].second) }
-                LOGGER.info("Scanning signatures")
+                LOGGER.trace("Scanning signatures")
                 signatures.indices.forEach {
                     knnQueriesChunk.indices.forEach { i ->
                         processSignature(it, sigReIm, sigLength, queryCentroidIP[i], knnQueriesChunk[i].first)
@@ -486,7 +489,7 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
 
 
     private fun scanSplit(p: KnnPredicate<*>, pqReal: PQ, pqImag: PQ, sigReIm: UShortArray, sigLength: Int, k: Int = p.k): List<Selection<ComparablePair<LongArray, Float>>> {
-        LOGGER.debug("Converting signature array")
+        LOGGER.debug("Scanning in SPLIT mode.")
         val knnQueries = p.query.mapIndexed { _, q_ ->
             val q = q_ as Complex32VectorValue
             (if (k == 1) MinSingleSelection<ComparablePair<LongArray, Float>>() else MinHeapSelection(k)) to q
@@ -504,7 +507,7 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
                       pqImag.precomputeCentroidQueryRealIPFloat(q)
                     ).toTypedArray()
                 }
-                LOGGER.info("Scanning signatures")
+                if (LOGGER.isTraceEnabled) LOGGER.trace("Scanning signatures")
                 signatures.indices.forEach {
                     knnQueriesChunk.indices.forEach { i ->
                         processSignatureSplit(it, sigReIm, sigLength,

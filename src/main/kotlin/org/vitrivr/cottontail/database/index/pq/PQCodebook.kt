@@ -49,7 +49,7 @@ class PQCodebook<T: VectorValue<*>> (val centroids: Array<T>, val inverseDataCov
          * @param subspaceData entries in this array are subvectors of the data to index
          */
         fun learnFromRealData(subspaceData: Array<out RealVectorValue<*>>, numCentroids: Int, maxIterations: Int): Pair<PQCodebook<out RealVectorValue<*>>, IntArray> {
-            LOGGER.info("Calculating inverse data covariance matrix from supplied data.")
+            LOGGER.debug("Calculating inverse data covariance matrix from supplied data.")
             require(subspaceData.all { it::class.java == subspaceData[0]::class.java })
             return when(subspaceData[0]) {
                 is DoubleVectorValue -> {
@@ -76,12 +76,12 @@ class PQCodebook<T: VectorValue<*>> (val centroids: Array<T>, val inverseDataCov
             val clusterer = KMeansPlusPlusClusterer<Vector>(numCentroids, maxIterations) { a, b ->
                 mahalanobisSqOpt(a, 0, a.size, b, 0, inverseDataCovMatrix)
             }
-            LOGGER.info("Learning...")
+            LOGGER.debug("Learning...")
             val centroidClusters = clusterer.cluster(subspaceData.mapIndexed { i, value ->
                 Vector(value, i)
             })
-            LOGGER.info("Done learning.")
-            LOGGER.info("Building codebook and signatures from commons math result")
+            LOGGER.debug("Done learning.")
+            LOGGER.debug("Building codebook and signatures from commons math result")
             val signatures = IntArray(subspaceData.size)
             centroidClusters.forEachIndexed { i, cluster ->
                 cluster.points.forEach {

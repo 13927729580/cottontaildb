@@ -257,26 +257,5 @@ class NonBucketingSuperBitLSHIndex<T : VectorValue<*>> (name: Name.IndexName, pa
         return recordset
     }
 
-    private fun addCandidatesWithinRadius(subSignature: List<Boolean>, stage: Int, tupleIds: HashSet<Long>, radius: Int, negate: Boolean) {
-        if (radius == 0) {
-            this.maps[stage][subSignature.joinToString(separator = "", transform = ::boolToString)]?.let { tupleIds.addAll(it.toList()) }
-            if (negate) {
-                this.maps[stage][subSignature.map { !it }.joinToString(separator = "", transform = ::boolToString)]?.let { tupleIds.addAll(it.toList()) }
-            }
-        } else {
-            // get signatures in hamming sphere
-            val signaturesToConsider = SuperBit.getSignaturesInHammingSphere(subSignature.toBooleanArray(), radius)
-            // this part starts becoming expensive! I guess that's where the bucketing at index time might be
-            // advantageous...
-            // add all tids of those and the negated ones
-            signaturesToConsider.forEach { s ->
-                this.maps[stage][s.joinToString(separator = "", transform = ::boolToString)]?.let { tupleIds.addAll(it.toList()) }
-                if (negate) {
-                    this.maps[stage][s.map { !it }.joinToString(separator = "", transform = ::boolToString)]?.let { tupleIds.addAll(it.toList()) }
-                }
-            }
-        }
-    }
-
     private fun boolToString(b: Boolean): String = if (b) "1" else "0"
 }
