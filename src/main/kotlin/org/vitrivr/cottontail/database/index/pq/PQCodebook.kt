@@ -62,16 +62,11 @@ class PQCodebook<T: VectorValue<*>> (val centroids: Array<T>, val inverseDataCov
                     val array = Array(subspaceData.size) {
                         (subspaceData[it] as FloatVectorValue).data.map { j -> j.toDouble() }.toDoubleArray()
                     }
-                    val inverseDataCovMatrix = inverse(Covariance(array, false).covarianceMatrix)
-                    val (centroidClusters, signatures) = clusterRealData(array, inverseDataCovMatrix, numCentroids, maxIterations)
-                    PQCodebook(Array(numCentroids) {
-                        FloatVectorValue(centroidClusters[it].center.point.map { v ->
-                            v.toFloat()
-                        }.toFloatArray())
-                    }, inverseDataCovMatrix.data.map {
-                        FloatVectorValue(it.map {
-                            v -> v.toFloat()
-                        }.toFloatArray()) }.toTypedArray()) to signatures
+                    val (doublePQCodebook, signatures) = learnFromRealData(array, numCentroids, maxIterations)
+                    val floatPQCodebooks = PQCodebook(
+                            doublePQCodebook.centroids.map { c -> FloatVectorValue(FloatArray(c.logicalSize) { c.data[it].toFloat()}) }.toTypedArray(),
+                            doublePQCodebook.inverseDataCovarianceMatrix.map { col -> FloatVectorValue(FloatArray(col.logicalSize) { col.data[it].toFloat()}) }.toTypedArray())
+                    floatPQCodebooks to signatures
                 }
                 else -> throw IllegalArgumentException("Other RealVectorValue types not implemented for PQ")
             }
