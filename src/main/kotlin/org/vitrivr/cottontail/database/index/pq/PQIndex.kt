@@ -158,11 +158,30 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
         signatures.clear()
         tIds.clear()
         LOGGER.info("Index ${name.simple} loading Signatures from store")
+        val expectedSignatureSize = config.numSubspaces * when(config.complexStrategy) { PQIndexConfig.ComplexStrategy.DIRECT -> 1; PQIndexConfig.ComplexStrategy.SPLIT -> 2}
         signaturesStore.forEach { (signature, tIds_) ->
+            check(signature.size == expectedSignatureSize) { "Loaded a signature [${signature.joinToString(separator = ",")}] with unexpected signature size (${signature.size} instead of $expectedSignatureSize)."}
             signatures.add(signature!!)
             tIds.add(tIds_)
         }
-        LOGGER.info("Done.")
+        LOGGER.info("Done loading.")
+        if (signatures.size > 0) {
+            logSignatureStatistics()
+        }
+    }
+
+    private fun logSignatureStatistics() {
+        // some statistics:
+        val tIdsPerSignatureDistribution = mutableMapOf<Int, Int>()
+        tIds.forEach { tIds1 ->
+            tIdsPerSignatureDistribution[tIds1.size] = tIdsPerSignatureDistribution.getOrDefault(tIds1.size, 0) + 1
+//            tIdsPerSignatureDistribution.getOrPut(tIds.size) { 0 }.inc() // would this work?
+        }
+        LOGGER.info("${signatures.size} unique signatures.")
+        LOGGER.info("Most Common Signature has ${tIds.maxOf { it.size }} tIds.")
+        LOGGER.info("Least Common Signature has ${tIds.minOf { it.size }} tIds.")
+        val largestFirst = tIdsPerSignatureDistribution.toSortedMap(compareBy { -it })
+        LOGGER.info("Complete Size distribution (numTIdsPerSignature:numSignatures): ${largestFirst.map { (k, v) -> "$k:$v" }.joinToString()}")
     }
 
     /**
@@ -250,7 +269,7 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
             }
         }
 
-        LOGGER.info("Learning with ${learningTIds.size} vectors...")
+        LOGGER.info("Learning from ${learningTIds.size} vectors...")
         val (pq, signatures) = PQ.fromPermutedData(config.numSubspaces, config.numCentroids, preProcessedLearningData.toTypedArray(), type)
         this.pq = pq
         pqStore.set(pq)
@@ -262,10 +281,7 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
                 }
             }
             PQIndexConfig.ComplexStrategy.SPLIT -> {
-                LOGGER.info("Learning imaginary part ${learningTIds.size} vectors...")
-                (signatures zip learningTIds).forEach { (sig, tid) ->
-                    signaturesTidsLoc.getOrPut(sig.toList()) { mutableListOf() }.add(tid)
-                }
+                LOGGER.info("Learning imaginary part from ${learningTIds.size} vectors...")
                 val (pqImag, signaturesImag) = PQ.fromPermutedData(config.numSubspaces, config.numCentroids, preProcessedLearningDataImag!!.toTypedArray(), type)
                 this.pqImag = pqImag
                 pqStoreImag.set(pqImag)
@@ -294,14 +310,6 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
         LOGGER.info("Loading signatures from disk.")
         loadSignaturesFromDisk()
         LOGGER.info("Done.")
-        // some statistics:
-        val tIdsPerSignatureDistribution = mutableMapOf<Int, Int>()
-        signaturesTidsLoc.forEach { (_, tIds) ->
-            tIdsPerSignatureDistribution[tIds.size] = tIdsPerSignatureDistribution.getOrDefault(tIds.size, 0) + 1
-//            tIdsPerSignatureDistribution.getOrPut(tIds.size) { 0 }.inc() // would this work?
-        }
-        LOGGER.info("PQIndex rebuild done. Have ${signatures.size} unique signatures.")
-        LOGGER.info("Size distribution (size:numSignatures): ${tIdsPerSignatureDistribution.map { (k, v) -> "$k:$v" }.joinToString()}")
         // todo: check if we're really done porting this function to work in SPLIT mode...
     }
 
@@ -386,7 +394,7 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
         val p = predicate as KnnPredicate<*>
 
         LOGGER.debug("Converting signature array")
-        val sigLength = config.numSubspaces
+        val sigLength = signatures[0].size
         // todo:
         //  * this does not necessarily have to happen at query time! -> move to before
         //  * use adaptable size (UByte for nc <= 128? Custom via Long plus pad?
