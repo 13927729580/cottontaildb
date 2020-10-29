@@ -153,6 +153,10 @@ inline class Complex32VectorValue(val data: FloatArray) : ComplexVectorValue<Flo
         }
     }) else throw IllegalArgumentException("Dimensions ${this.logicalSize} and ${other.logicalSize} don't agree!")
 
+    override operator fun minus(other: VectorValue<*>) = if (this.logicalSize == other.logicalSize)
+        minus(other, 0, 0, logicalSize)
+    else throw IllegalArgumentException("Dimensions ${this.logicalSize} and ${other.logicalSize} don't agree!")
+
     override fun minus(other: VectorValue<*>, start: Int, otherStart: Int, length: Int) = Complex32VectorValue(
             when (other) {
                 is Complex32VectorValue -> FloatArray(length shl 1) { this.data[(start shl 1) + it] - other.data[(otherStart shl 1) + it] }
@@ -419,6 +423,10 @@ inline class Complex32VectorValue(val data: FloatArray) : ComplexVectorValue<Flo
         }
         return Complex32Value(real, imaginary)
     }
+
+    override infix fun dot(other: VectorValue<*>) = if (other.logicalSize == this.logicalSize)
+        dot(other, 0, 0, logicalSize)
+    else throw IllegalArgumentException("Dimensions ${this.logicalSize} and ${other.logicalSize} don't agree!")
 
     override fun dot(other: VectorValue<*>, start: Int, otherStart: Int, length: Int) = when (other) {
         is Complex32VectorValue -> {

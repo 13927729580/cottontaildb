@@ -158,11 +158,9 @@ interface VectorValue<T: Number> : Value {
      *
      * @return Sum of the elements of this [VectorValue].
      */
-
     infix fun dot(other: VectorValue<*>) = if (other.logicalSize == this.logicalSize)
         dot(other, 0, 0, logicalSize)
     else throw IllegalArgumentException("Dimensions ${this.logicalSize} and ${other.logicalSize} don't agree!")
-
 
     /**
      * Builds the dot product between this and the other [VectorValue]. Subvectors can be defined by the

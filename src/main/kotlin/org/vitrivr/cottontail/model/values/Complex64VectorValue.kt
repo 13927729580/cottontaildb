@@ -150,6 +150,10 @@ inline class Complex64VectorValue(val data: DoubleArray) : ComplexVectorValue<Do
         }
     }) else throw IllegalArgumentException("Dimensions ${this.logicalSize} and ${other.logicalSize} don't agree!")
 
+    override operator fun minus(other: VectorValue<*>) = if (this.logicalSize == other.logicalSize)
+        minus(other, 0, 0, logicalSize)
+    else throw IllegalArgumentException("Dimensions ${this.logicalSize} and ${other.logicalSize} don't agree!")
+
     /**
      * Calculates the element-wise difference of this and the other [VectorValue]. Subvectors can be defined by the
      * [start] [startOther] and [length] parameters.
@@ -426,6 +430,10 @@ inline class Complex64VectorValue(val data: DoubleArray) : ComplexVectorValue<Do
         }
         return Complex64Value(real, imaginary)
     }
+
+    override infix fun dot(other: VectorValue<*>) = if (other.logicalSize == this.logicalSize)
+        dot(other, 0, 0, logicalSize)
+    else throw IllegalArgumentException("Dimensions ${this.logicalSize} and ${other.logicalSize} don't agree!")
 
     /**
      * Builds the dot product between this and the other [VectorValue]. Subvectors can be defined by the
