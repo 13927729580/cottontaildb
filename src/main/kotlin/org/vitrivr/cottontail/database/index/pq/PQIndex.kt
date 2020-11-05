@@ -294,10 +294,10 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
         LOGGER.debug("Learning done.")
         // now get and add signatures for elements not in learning set
         LOGGER.debug("Generating signatures for all vectors...")
+        //todo: this is memory intensive and can fail...
+        //      do chunked?
         val learningTIdsSet = learningTIds.toHashSet() // convert to hash set for O(1) lookup
-        val tidsSignatures = findSignaturesParallel(tx, learningTIdsSet)
-        LOGGER.trace("Done generating signatures for all vectors. Adding to map.")
-        tidsSignatures.forEach { (tid, sig) ->
+        findSignaturesParallel(tx, learningTIdsSet).forEach { (tid, sig) ->
             signaturesTidsLoc.getOrPut(sig) { mutableListOf() }.add(tid)
         }
         LOGGER.debug("Done. Storing signatures.")
@@ -310,7 +310,6 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
         LOGGER.debug("Loading signatures from disk.")
         loadSignaturesFromDisk()
         LOGGER.info("PQ rebuild Done.")
-        // todo: check if we're really done porting this function to work in SPLIT mode...
     }
 
     private fun findSignaturesParallel(tx: Entity.Tx, ignoreTids: HashSet<Long>): List<Pair<Long, List<Int>>> {
@@ -435,10 +434,10 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
                 }
             }
             if (LOGGER.isTraceEnabled) {
-                LOGGER.trace("Considered $numTids after approximation scan for query $i")
+                LOGGER.trace("Considered $numTids after approximation scan for query $i.")
             }
         }
-        LOGGER.info("Done filtering")
+        LOGGER.info("Done filtering.")
         return KnnUtilities.selectToRecordset(this.produces.first(), knnsExact)
     }
 

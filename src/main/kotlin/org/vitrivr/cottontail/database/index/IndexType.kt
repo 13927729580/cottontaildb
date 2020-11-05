@@ -1,6 +1,7 @@
 package org.vitrivr.cottontail.database.index
 
 import org.vitrivr.cottontail.database.entity.Entity
+import org.vitrivr.cottontail.database.index.greedygrouping.GreedyGroupingIndex
 import org.vitrivr.cottontail.database.index.hash.NonUniqueHashIndex
 import org.vitrivr.cottontail.database.index.hash.UniqueHashIndex
 import org.vitrivr.cottontail.database.index.lsh.superbit.NonBucketingSuperBitLSHIndex
@@ -25,7 +26,8 @@ enum class IndexType(val inexact: Boolean) {
     SH(true), /* A spectral hashing based index (for approximate kNN lookup). */
     LSH(true), /* A locality sensitive hashing based index for approximate kNN lookup with Lp distance. */
     SUPERBIT_LSH(true), /* A locality sensitive hashing based index for approximate kNN lookup with cosine distance. */
-    NONBUCKETING_SUPERBIT_LSH(true); /* A locality sensitive hashing based index for approximate kNN lookup with cosine distance. */
+    NONBUCKETING_SUPERBIT_LSH(true), /* A locality sensitive hashing based index for approximate kNN lookup with cosine distance. */
+    GG(true); /* A Greedy grouping index */
 
     /**
      * Opens an index of this [IndexType] using the given name and [Entity].
@@ -41,6 +43,7 @@ enum class IndexType(val inexact: Boolean) {
         NONBUCKETING_SUPERBIT_LSH -> NonBucketingSuperBitLSHIndex<VectorValue<*>>(name, entity, columns, null)
         VAF -> VAFIndex(name, entity, columns)
         PQ -> PQIndex(name, entity, columns, null)
+        GG -> GreedyGroupingIndex(name, entity, columns)
         else -> TODO()
     }
 
@@ -60,6 +63,7 @@ enum class IndexType(val inexact: Boolean) {
         NONBUCKETING_SUPERBIT_LSH -> NonBucketingSuperBitLSHIndex<VectorValue<*>>(name, entity, columns, NonBucketingSuperBitLSHIndexConfig.fromParamMap(params))
         VAF -> VAFIndex(name, entity, columns)
         PQ -> PQIndex(name, entity, columns, PQIndexConfig.fromParamsMap(params))
+        GG -> GreedyGroupingIndex(name, entity, columns)
         else -> TODO()
     }
 }
