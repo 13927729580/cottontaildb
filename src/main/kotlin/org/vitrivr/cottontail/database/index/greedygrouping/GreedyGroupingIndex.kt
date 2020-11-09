@@ -210,26 +210,29 @@ class GreedyGroupingIndex(override val name: Name.IndexName, override val parent
          */
 
         require(canProcess(predicate)) {"The supplied predicate $predicate cannot be processed by index ${this.name}"}
-        LOGGER.info("Index '${this.name}' Filtering")
         predicate as KnnPredicate<*>
+        LOGGER.info("Index '${this.name}' Filtering ${predicate.query.size} queries.")
         // todo: the following is not yet fully correct, but should serve as a documentation hint that the filter
         //  algorithm should consider the k depending on the group size (need to consider more groups if k large)!
         require(predicate.k < tx.maxTupleId() / numGroups * queryConsiderNumGroups) {"k too large for this index."}
 
-        val knns = predicate.query.map { query ->
-            query as Complex32VectorValue
+        val knns = predicate.query.map { _ ->
+            if (predicate.k == 1) MinSingleSelection<ComparablePair<Long, DoubleValue>>() else MinHeapSelection(predicate.k)
+        }
+        predicate.query.indices.toList().parallelStream().forEach { queryIndex ->
+            LOGGER.trace("Query $queryIndex: Scanning groups.")
+            val query = predicate.query[queryIndex] as Complex32VectorValue
             val groupKnn = MinHeapSelection<ComparablePair<Int, DoubleValue>>(queryConsiderNumGroups)
             groupMeans.forEachIndexed { i, gm ->
                 groupKnn.offer(ComparablePair(i, predicate.distance.invoke(gm, query)))
             }
-            val knn = if (predicate.k == 1) MinSingleSelection<ComparablePair<Long, DoubleValue>>() else MinHeapSelection(predicate.k)
+            LOGGER.trace("Query $queryIndex: Scanning group members.")
             for (i in 0 until groupKnn.size) {
                 val tIdsOfGroup = tIds[groupKnn[i].first]
                 tIdsOfGroup.forEach {
-                    knn.offer(ComparablePair(it, predicate.distance.invoke(tx.read(it)[columns[0]] as Complex32VectorValue, query)))
+                    knns[queryIndex].offer(ComparablePair(it, predicate.distance.invoke(tx.read(it)[columns[0]] as Complex32VectorValue, query)))
                 }
             }
-            knn
         }
 
         LOGGER.info("Done filtering.")
