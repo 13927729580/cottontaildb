@@ -61,7 +61,7 @@ class GreedyGroupingIndex(override val name: Name.IndexName, override val parent
     val rng = SplittableRandom(1234L)
 
     val groupMeans = mutableListOf<Complex32VectorValue>()
-    val tIds = mutableListOf<LongArray>()
+    val tIdsOfGroups = mutableListOf<LongArray>()
     private val groupsStore = db.hashMap(GROUPS_NAME, Serializer.FLOAT_ARRAY, Serializer.LONG_ARRAY).counterEnable().createOrOpen()
 
 
@@ -78,10 +78,10 @@ class GreedyGroupingIndex(override val name: Name.IndexName, override val parent
 
     private fun loadGroupsFromDisk() {
         LOGGER.debug("Index ${name.simple} loading groups from disk.")
-        tIds.clear()
+        tIdsOfGroups.clear()
         groupMeans.clear()
         groupsStore.forEach { mean, tId ->
-            tIds.add(tId)
+            tIdsOfGroups.add(tId)
             groupMeans.add(Complex32VectorValue(mean))
         }
         LOGGER.debug("Loaded ${groupMeans.size} groups from disk.")
@@ -239,21 +239,43 @@ class GreedyGroupingIndex(override val name: Name.IndexName, override val parent
         //  algorithm should consider the k depending on the group size (need to consider more groups if k large)!
         require(predicate.k < tx.maxTupleId() / numGroups * considerNumGroups) {"k too large for this index considering $considerNumGroups groups."}
 
-        val knns = predicate.query.map { _ ->
-            if (predicate.k == 1) MinSingleSelection<ComparablePair<Long, DoubleValue>>() else MinHeapSelection(predicate.k)
+        val groupKnns = predicate.query.map { _ ->
+            MinHeapSelection<ComparablePair<Int, DoubleValue>>(considerNumGroups)
         }
+
+        LOGGER.debug("Scanning group mean signals.")
         predicate.query.indices.toList().parallelStream().forEach { queryIndex ->
             LOGGER.trace("Query $queryIndex: Scanning groups.")
             val query = predicate.query[queryIndex] as Complex32VectorValue
-            val groupKnn = MinHeapSelection<ComparablePair<Int, DoubleValue>>(considerNumGroups)
             groupMeans.forEachIndexed { i, gm ->
-                groupKnn.offer(ComparablePair(i, predicate.distance.invoke(gm, query)))
+                groupKnns[queryIndex].offer(ComparablePair(i, predicate.distance.invoke(gm, query)))
             }
-            LOGGER.trace("Query $queryIndex: Scanning group members.")
-            for (i in 0 until groupKnn.size) {
-                val tIdsOfGroup = tIds[groupKnn[i].first]
-                tIdsOfGroup.forEach {
-                    knns[queryIndex].offer(ComparablePair(it, predicate.distance.invoke(tx.read(it)[columns[0]] as Complex32VectorValue, query)))
+        }
+        // transform groupKnns to
+        LOGGER.debug("Transforming query group results.")
+        val queriesForGroup = Array(numGroups) { emptyList<Int>().toMutableList() }
+        groupKnns.forEachIndexed { i, knn ->
+            for (j in 0 until knn.size) {
+                queriesForGroup[knn[j].first].add(i)
+            }
+        }
+        // now scan the groups
+        // parallelize group scanning is easiest on groups, but will likely have large load imbalance
+        // this requires that the selection objects are thead safe which I think they are
+
+        val knns = predicate.query.map { _ ->
+            if (predicate.k == 1) MinSingleSelection<ComparablePair<Long, DoubleValue>>() else MinHeapSelection(predicate.k)
+        }
+
+        LOGGER.debug("Scanning group members.")
+        queriesForGroup.indices.toList().parallelStream().forEach { i ->
+            val queryIndexes = queriesForGroup[i]
+            LOGGER.trace("Scanning group members of group $i for ${queryIndexes.size} interested queries.")
+            val tIdsOfGroup = tIdsOfGroups[i]
+            tIdsOfGroup.forEach {
+                val value = tx.read(it)[columns[0]] as Complex32VectorValue
+                queryIndexes.forEach { queryIndex ->
+                    knns[queryIndex].offer(ComparablePair(it, predicate.distance.invoke(value, predicate.query[queryIndex])))
                 }
             }
         }
