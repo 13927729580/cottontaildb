@@ -58,7 +58,7 @@ fun CottontailGrpc.KnnHint.toHint(entity: Entity): KnnPredicateHint? = when (thi
     CottontailGrpc.KnnHint.HintCase.INDEXINEXACT -> KnnPredicateHint.KnnInexactPredicateHint
     CottontailGrpc.KnnHint.HintCase.NOINDEX -> KnnPredicateHint.KnnNoIndexPredicateHint
     CottontailGrpc.KnnHint.HintCase.INDEXTYPE -> KnnPredicateHint.KnnIndexTypePredicateHint(IndexType.valueOf(this.indexType.name))
-    CottontailGrpc.KnnHint.HintCase.INDEXNAME -> KnnPredicateHint.KnnIndexNamePredicateHint(entity.name.index(this.indexName))
+    CottontailGrpc.KnnHint.HintCase.INDEXNAMEHINT -> KnnPredicateHint.KnnIndexNamePredicateHint(entity.name.index(this.indexNameHint.name), this.indexNameHint.parametersMap)
     CottontailGrpc.KnnHint.HintCase.HINT_NOT_SET -> null
     null -> null
 }

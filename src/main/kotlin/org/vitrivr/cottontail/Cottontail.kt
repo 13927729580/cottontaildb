@@ -18,6 +18,7 @@ import kotlin.time.ExperimentalTime
  */
 @ExperimentalTime
 fun main(args: Array<String>) {
+    println("PID: ${ProcessHandle.current().pid()}")
 
     /* Handle case when arguments are empty. */
     if (args.isEmpty()) {

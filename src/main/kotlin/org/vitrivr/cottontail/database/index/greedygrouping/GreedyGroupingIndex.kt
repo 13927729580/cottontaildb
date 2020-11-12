@@ -12,6 +12,7 @@ import org.vitrivr.cottontail.database.index.pq.PQIndex
 import org.vitrivr.cottontail.database.queries.components.KnnPredicate
 import org.vitrivr.cottontail.database.queries.components.Predicate
 import org.vitrivr.cottontail.database.queries.planning.cost.Cost
+import org.vitrivr.cottontail.database.queries.predicates.KnnPredicateHint
 import org.vitrivr.cottontail.execution.tasks.entity.knn.KnnUtilities
 import org.vitrivr.cottontail.math.knn.metrics.AbsoluteInnerProductDistance
 import org.vitrivr.cottontail.math.knn.selection.ComparablePair
@@ -48,7 +49,7 @@ class GreedyGroupingIndex(override val name: Name.IndexName, override val parent
     override val type = IndexType.GG
 
     private val numGroups = 50 // todo: config
-    private val queryConsiderNumGroups = (numGroups + 9) / 10
+    private val queryConsiderNumGroupsDefault = (numGroups + 9) / 10
 
     /** The internal [DB] reference. */
     private val db = if (parent.parent.parent.config.memoryConfig.forceUnmapMappedFiles) {
@@ -211,10 +212,32 @@ class GreedyGroupingIndex(override val name: Name.IndexName, override val parent
 
         require(canProcess(predicate)) {"The supplied predicate $predicate cannot be processed by index ${this.name}"}
         predicate as KnnPredicate<*>
-        LOGGER.info("Index '${this.name}' Filtering ${predicate.query.size} queries.")
+        // check if name hint, then look for param in there, if not name hint or no param use default
+        val considerNumGroups = if (predicate.hint is KnnPredicateHint.KnnIndexNamePredicateHint) {
+            val paramName = "queryConsiderNumGroups"
+            val v = predicate.hint.parameters[paramName]
+            if (v != null) {
+                LOGGER.debug("Found '$paramName' override parameter.")
+                val vNum = v.toIntOrNull()
+                if (vNum != null) {
+                    LOGGER.info("Found '$paramName' override parameter with value '$vNum'.")
+                    vNum
+                } else {
+                    LOGGER.info("Found '$paramName' override parameter '$v' but could not parse it as int.")
+                    queryConsiderNumGroupsDefault
+                }
+            } else {
+                queryConsiderNumGroupsDefault
+            }
+        }
+        else {
+            queryConsiderNumGroupsDefault
+        }
+
+        LOGGER.info("Index '${this.name}' Filtering ${predicate.query.size} queries. Considering $considerNumGroups groups")
         // todo: the following is not yet fully correct, but should serve as a documentation hint that the filter
         //  algorithm should consider the k depending on the group size (need to consider more groups if k large)!
-        require(predicate.k < tx.maxTupleId() / numGroups * queryConsiderNumGroups) {"k too large for this index."}
+        require(predicate.k < tx.maxTupleId() / numGroups * considerNumGroups) {"k too large for this index considering $considerNumGroups groups."}
 
         val knns = predicate.query.map { _ ->
             if (predicate.k == 1) MinSingleSelection<ComparablePair<Long, DoubleValue>>() else MinHeapSelection(predicate.k)
@@ -222,7 +245,7 @@ class GreedyGroupingIndex(override val name: Name.IndexName, override val parent
         predicate.query.indices.toList().parallelStream().forEach { queryIndex ->
             LOGGER.trace("Query $queryIndex: Scanning groups.")
             val query = predicate.query[queryIndex] as Complex32VectorValue
-            val groupKnn = MinHeapSelection<ComparablePair<Int, DoubleValue>>(queryConsiderNumGroups)
+            val groupKnn = MinHeapSelection<ComparablePair<Int, DoubleValue>>(considerNumGroups)
             groupMeans.forEachIndexed { i, gm ->
                 groupKnn.offer(ComparablePair(i, predicate.distance.invoke(gm, query)))
             }

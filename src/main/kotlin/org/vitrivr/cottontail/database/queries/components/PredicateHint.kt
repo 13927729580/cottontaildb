@@ -41,7 +41,7 @@ sealed class KnnPredicateHint : PredicateHint() {
     /**
      * A [PredicateHint] that indicates, what [Index] should be used (identified by name).
      */
-    data class KnnIndexNamePredicateHint(val name: Name.IndexName) : KnnPredicateHint()
+    data class KnnIndexNamePredicateHint(val name: Name.IndexName, val parameters: Map<String, String>) : KnnPredicateHint()
 
     /**
      * A [PredicateHint] that indicates, how many threads should be used for execution.
