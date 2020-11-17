@@ -8,7 +8,6 @@ import org.vitrivr.cottontail.database.entity.Entity
 import org.vitrivr.cottontail.database.events.DataChangeEvent
 import org.vitrivr.cottontail.database.index.Index
 import org.vitrivr.cottontail.database.index.IndexType
-import org.vitrivr.cottontail.database.index.pq.PQIndex
 import org.vitrivr.cottontail.database.queries.components.KnnPredicate
 import org.vitrivr.cottontail.database.queries.components.Predicate
 import org.vitrivr.cottontail.database.queries.planning.cost.Cost
@@ -31,6 +30,7 @@ import java.nio.file.Path
 import java.util.*
 
 class GreedyGroupingIndex(override val name: Name.IndexName, override val parent: Entity, override val columns: Array<ColumnDef<*>>,
+                          config: GreedyGroupingIndexConfig? = null
                           ): Index() {
         companion object {
             const val CONFIG_NAME = "gg_config"
@@ -42,14 +42,12 @@ class GreedyGroupingIndex(override val name: Name.IndexName, override val parent
     /** The [Path] to the [DBO]'s main file OR folder. */
     override val path: Path = this.parent.path.resolve("idx_gg_$name.db")
 
-    /** The [PQIndex] implementation returns exactly the columns that is indexed. */
+    /** The [GreedyGroupingIndex] implementation returns exactly the columns that is indexed. */
     override val produces: Array<ColumnDef<*>> = arrayOf(ColumnDef(this.parent.name.column("distance"), ColumnType.forName("DOUBLE")))
 
     /** The type of [Index]. */
     override val type = IndexType.GG
 
-    private val numGroups = 50 // todo: config
-    private val queryConsiderNumGroupsDefault = (numGroups + 9) / 10
 
     /** The internal [DB] reference. */
     private val db = if (parent.parent.parent.config.memoryConfig.forceUnmapMappedFiles) {
@@ -58,7 +56,12 @@ class GreedyGroupingIndex(override val name: Name.IndexName, override val parent
         DBMaker.fileDB(this.path.toFile()).fileMmapEnable().transactionEnable().make()
     }
 
-    val rng = SplittableRandom(1234L)
+    val config: GreedyGroupingIndexConfig
+    private val configOnDisk = db.atomicVar(CONFIG_NAME, GreedyGroupingIndexConfig.Serializer).createOrOpen()
+
+    private val queryConsiderNumGroupsDefault: Int
+
+    val rng: SplittableRandom
 
     val groupMeans = mutableListOf<Complex32VectorValue>()
     val tIdsOfGroups = mutableListOf<LongArray>()
@@ -72,6 +75,24 @@ class GreedyGroupingIndex(override val name: Name.IndexName, override val parent
         if (!columns.all { it.type == ColumnType.forName("COMPLEX32_VEC") }) {
             throw DatabaseException.IndexNotSupportedException(name, "${this::class.java} currently only supports indexing complex32 vector columns, not ${columns.first()::class.java}")
         }
+        val cod = configOnDisk.get()
+        if (config == null) {
+            if (cod == null) {
+//                throw StoreException("No config supplied but the config from disk was null!")
+                LOGGER.warn("No config supplied, but the config from disk was null!! Using a dummy config. Please consider this index invalid!")
+                this.config = GreedyGroupingIndexConfig(1, 1234L)
+            } else {
+                this.config = cod
+            }
+        } else {
+            configOnDisk.set(config)
+            this.config = config
+        }
+
+        rng = SplittableRandom(this.config.seed)
+
+        // scan >=10% of entries by default
+        queryConsiderNumGroupsDefault = (this.config.numGroups + 9) / 10
 
         loadGroupsFromDisk()
     }
@@ -137,9 +158,9 @@ class GreedyGroupingIndex(override val name: Name.IndexName, override val parent
         // get a set of all TIDs that exist.
         val remainingTIds = mutableSetOf<Long>()
         tx.forEach { remainingTIds.add(it.tupleId) }
-        val groupSize = (remainingTIds.size + numGroups - 1) / numGroups  // ceildiv
+        val groupSize = (remainingTIds.size + config.numGroups - 1) / config.numGroups  // ceildiv
         val finishedTIds = mutableSetOf<Long>()
-        LOGGER.info("Index ${name.simple} rebuilding. Grouping ${remainingTIds.size} into $numGroups groups. GroupSize <= $groupSize.")
+        LOGGER.info("Index ${name.simple} rebuilding. Grouping ${remainingTIds.size} into ${config.numGroups} groups. GroupSize <= $groupSize.")
         groupsStore.clear()
         while (remainingTIds.isNotEmpty()) {
             val groupSeedTid = remainingTIds.elementAt(rng.nextInt(remainingTIds.size))
@@ -169,7 +190,7 @@ class GreedyGroupingIndex(override val name: Name.IndexName, override val parent
             groupMean /= DoubleValue(knn.size)
             groupsStore[FloatArray(groupMean.data.size) {groupMean.data[it].toFloat()}] = groupTids.toLongArray()
         }
-        check(groupsStore.size == numGroups) {"${name.simple} did not group into the expected number of groups (expected: $numGroups, actual: ${groupsStore.size})."}
+        check(groupsStore.size == config.numGroups) {"${name.simple} did not group into the expected number of groups (expected: ${config.numGroups}, actual: ${groupsStore.size})."}
         LOGGER.debug("Commiting to disk.")
         db.commit()
         loadGroupsFromDisk()
@@ -237,7 +258,7 @@ class GreedyGroupingIndex(override val name: Name.IndexName, override val parent
         LOGGER.info("Index '${this.name}' Filtering ${predicate.query.size} queries. Considering $considerNumGroups groups")
         // todo: the following is not yet fully correct, but should serve as a documentation hint that the filter
         //  algorithm should consider the k depending on the group size (need to consider more groups if k large)!
-        require(predicate.k < tx.maxTupleId() / numGroups * considerNumGroups) {"k too large for this index considering $considerNumGroups groups."}
+        require(predicate.k < tx.maxTupleId() / config.numGroups * considerNumGroups) {"k too large for this index considering $considerNumGroups groups."}
 
         val groupKnns = predicate.query.map { _ ->
             MinHeapSelection<ComparablePair<Int, DoubleValue>>(considerNumGroups)
@@ -253,7 +274,7 @@ class GreedyGroupingIndex(override val name: Name.IndexName, override val parent
         }
         // transform groupKnns to
         LOGGER.debug("Transforming query group results.")
-        val queriesForGroup = Array(numGroups) { emptyList<Int>().toMutableList() }
+        val queriesForGroup = Array(config.numGroups) { emptyList<Int>().toMutableList() }
         groupKnns.forEachIndexed { i, knn ->
             for (j in 0 until knn.size) {
                 queriesForGroup[knn[j].first].add(i)

@@ -2,6 +2,7 @@ package org.vitrivr.cottontail.database.index
 
 import org.vitrivr.cottontail.database.entity.Entity
 import org.vitrivr.cottontail.database.index.greedygrouping.GreedyGroupingIndex
+import org.vitrivr.cottontail.database.index.greedygrouping.GreedyGroupingIndexConfig
 import org.vitrivr.cottontail.database.index.hash.NonUniqueHashIndex
 import org.vitrivr.cottontail.database.index.hash.UniqueHashIndex
 import org.vitrivr.cottontail.database.index.lsh.superbit.NonBucketingSuperBitLSHIndex
@@ -43,7 +44,7 @@ enum class IndexType(val inexact: Boolean) {
         NONBUCKETING_SUPERBIT_LSH -> NonBucketingSuperBitLSHIndex<VectorValue<*>>(name, entity, columns, null)
         VAF -> VAFIndex(name, entity, columns)
         PQ -> PQIndex(name, entity, columns, null)
-        GG -> GreedyGroupingIndex(name, entity, columns)
+        GG -> GreedyGroupingIndex(name, entity, columns, null)
         else -> TODO()
     }
 
@@ -63,7 +64,7 @@ enum class IndexType(val inexact: Boolean) {
         NONBUCKETING_SUPERBIT_LSH -> NonBucketingSuperBitLSHIndex<VectorValue<*>>(name, entity, columns, NonBucketingSuperBitLSHIndexConfig.fromParamMap(params))
         VAF -> VAFIndex(name, entity, columns)
         PQ -> PQIndex(name, entity, columns, PQIndexConfig.fromParamsMap(params))
-        GG -> GreedyGroupingIndex(name, entity, columns)
+        GG -> GreedyGroupingIndex(name, entity, columns, GreedyGroupingIndexConfig.fromParamsMap(params))
         else -> TODO()
     }
 }
