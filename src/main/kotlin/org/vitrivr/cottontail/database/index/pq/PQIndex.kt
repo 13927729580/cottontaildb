@@ -11,6 +11,7 @@ import org.vitrivr.cottontail.database.index.IndexType
 import org.vitrivr.cottontail.database.queries.components.KnnPredicate
 import org.vitrivr.cottontail.database.queries.components.Predicate
 import org.vitrivr.cottontail.database.queries.planning.cost.Cost
+import org.vitrivr.cottontail.database.queries.predicates.KnnPredicateHint
 import org.vitrivr.cottontail.execution.tasks.entity.knn.KnnUtilities
 import org.vitrivr.cottontail.math.knn.metrics.AbsoluteInnerProductDistance
 import org.vitrivr.cottontail.math.knn.selection.ComparablePair
@@ -389,8 +390,35 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
      */
     override fun filter(predicate: Predicate, tx: Entity.Tx): Recordset {
         require(canProcess(predicate)) {"The supplied predicate $predicate cannot be processed by index ${this.name}"}
-        LOGGER.info("Index '${this.name}' Filtering")
         val p = predicate as KnnPredicate<*>
+        val paramName = "approxK"
+        val approxK = if (p.hint is KnnPredicateHint.KnnIndexNamePredicateHint) {
+            val v = p.hint.parameters[paramName]
+            // todo: try to find override param...
+            if (v != null) {
+                LOGGER.debug("Found '$paramName' override parameter.")
+                val vNum = v.toIntOrNull()
+                if (vNum != null) {
+                    LOGGER.info("Found '$paramName' override parameter with value '$vNum'.")
+                    vNum
+                } else {
+                    LOGGER.info("Found '$paramName' override parameter '$v' but could not parse it as int.")
+                    config.kApproxScan
+                }
+            } else {
+                config.kApproxScan
+            }
+        }
+        else {
+            config.kApproxScan
+        }
+
+        LOGGER.info("Index '${this.name}' Filtering. ApproxK: $approxK")
+        // todo: test
+
+        // todo: reorder approx and precise as was done for GG
+        //...
+        // todo: get rid of the comparable pair for all scans!!
 
         LOGGER.debug("Converting signature array")
         val sigLength = signatures[0].size
@@ -403,7 +431,6 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
             signatures[it / (sigLength)][it % (sigLength)].toUShort()
         }
         LOGGER.debug("Done.")
-        val approxK = config.kApproxScan
 
         val knns = when (config.complexStrategy) {
             PQIndexConfig.ComplexStrategy.DIRECT -> {
@@ -416,6 +443,8 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
         // get exact distances...
         // todo: consider merging scan and exact re-ranking.
         //       * we would not accumulate large knn objects that could use a lot of memory when going to large ks
+        //       * should we make a map<TID: Long, queryList: List<Int>> where queryList contains all queryIndices
+        //         interested in a given TID? We would avoid loading a given TID multiple times.
         LOGGER.debug("Re-ranking $approxK signature matches with exact distances.")
         val knnsExact = knns.map {
             val knnNew = if (p.k == 1) MinSingleSelection<ComparablePair<Long, DoubleValue>>() else MinHeapSelection(p.k)
