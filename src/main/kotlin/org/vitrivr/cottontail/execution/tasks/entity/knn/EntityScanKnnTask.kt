@@ -58,7 +58,10 @@ class EntityScanKnnTask<T : VectorValue<*>>(val entity: Entity, val knn: KnnPred
                 val value = it[this.knn.column]
                 if (value != null) {
                     this.knn.query.forEachIndexed { i, query ->
-                        this.knnSet[i].offer(ComparablePair(it.tupleId, this.knn.distance(query, value, this.knn.weights[i])))
+                        val distance = this.knn.distance(query, value, this.knn.weights[i])
+                        val knn = this.knnSet[i]
+                        if (knn.size < knn.k || knn.peek()!!.second > distance)
+                            knn.offer(ComparablePair(it.tupleId, distance))
                     }
                 }
             }
@@ -67,7 +70,10 @@ class EntityScanKnnTask<T : VectorValue<*>>(val entity: Entity, val knn: KnnPred
                 val value = it[this.knn.column]
                 if (value != null) {
                     this.knn.query.forEachIndexed { i, query ->
-                        this.knnSet[i].offer(ComparablePair(it.tupleId, this.knn.distance(query, value)))
+                        val distance = this.knn.distance(query, value)
+                        val knn = this.knnSet[i]
+                        if (knn.size < knn.k || knn.peek()!!.second > distance)
+                            knn.offer(ComparablePair(it.tupleId, distance))
                     }
                 }
             }

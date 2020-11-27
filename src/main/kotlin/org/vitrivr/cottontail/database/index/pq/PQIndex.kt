@@ -459,7 +459,10 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
                 tIds.forEach { tid ->
                     numTids++
                     val exact = tx.read(tid)[columns[0]]!! as ComplexVectorValue<*>
-                    knnNew.offer(ComparablePair(tid, p.distance(exact, p.query[i])))
+                    val distance = p.distance(exact, p.query[i])
+                    // only offer and create pair if there's a chance of success...
+                    if (knnNew.size < knnNew.k || knnNew.peek()!!.second > distance )
+                        knnNew.offer(ComparablePair(tid, distance))
                 }
             }
             if (LOGGER.isTraceEnabled) {
@@ -509,10 +512,9 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
     private inline fun processSignature(signatureIndex: Int, sigReIm: UShortArray, sigLength: Int, queryCentroidIP: PQCentroidQueryIPComplexVectorValue, knn: Selection<ComparablePair<LongArray, Float>>) {
         val sigOffset = signatureIndex * sigLength // offset into sign array
         val tidOfSig = tIds[signatureIndex]
-        val absIPSqApprox =
-                queryCentroidIP.approximateIP(sigReIm, sigOffset, sigLength).abs().value
-//                if (knn.added < knn.k || knn.peek()!!.second > -absIPSqApprox) // do we really need to create a new pair every single time?
-        knn.offer(ComparablePair(tidOfSig, -absIPSqApprox))
+        val absIPSqApprox = queryCentroidIP.approximateIP(sigReIm, sigOffset, sigLength).abs().value
+        if (knn.size < knn.k || knn.peek()!!.second > -absIPSqApprox) // do we really need to create a new pair every single time?
+            knn.offer(ComparablePair(tidOfSig, -absIPSqApprox))
     }
 
 
@@ -588,7 +590,7 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
                         - queryCentroidIPRealImag.approximateIP(sigReIm, sigOffset, lengthRealOrImag)
                 ).pow(2)
                 )
-//                if (knn.added < knn.k || knn.peek()!!.second > -absIPSqApprox) // do we really need to create a new pair every single time?
-        knn.offer(ComparablePair(tidOfSig, -absIPSqApprox))
+        if (knn.size < knn.k || knn.peek()!!.second > -absIPSqApprox) // do we really need to create a new pair every single time?
+            knn.offer(ComparablePair(tidOfSig, -absIPSqApprox))
     }
 }

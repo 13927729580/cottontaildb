@@ -30,7 +30,6 @@ import org.vitrivr.cottontail.model.values.types.ComplexVectorValue
 import org.vitrivr.cottontail.model.values.types.VectorValue
 import kotlin.collections.HashMap
 import kotlin.collections.HashSet
-import kotlin.math.abs
 
 /**
  * Represents a LSH based index in the Cottontail DB data model. An [Index] belongs to an [Entity] and can be used to
@@ -150,11 +149,14 @@ class SuperBitLSHIndex<T : VectorValue<*>>(name: Name.IndexName, parent: Entity,
                     if (value is VectorValue<*>) {
                         queryIndexes.forEach {queryIndex ->
                             val query = predicate.query[queryIndex]
-                            if (predicate.weights != null) {
-                                knns[queryIndex].offer(ComparablePair(it, predicate.distance(query, value, predicate.weights[queryIndex])))
+                            val knn = knns[queryIndex]
+                            val distance = if (predicate.weights != null) {
+                                predicate.distance(query, value, predicate.weights[queryIndex])
                             } else {
-                                knns[queryIndex].offer(ComparablePair(it, predicate.distance(query, value)))
+                                predicate.distance(query, value)
                             }
+                            if (knn.size < knn.k || knn.peek()!!.second > distance)
+                                knn.offer(ComparablePair(it, distance))
                         }
                     }
                 }

@@ -172,7 +172,9 @@ class GreedyGroupingIndex(override val name: Name.IndexName, override val parent
             LOGGER.trace("Scanning remaining elements.")
             tx.forEach {
                 if (!finishedTIds.contains(it.tupleId)) {
-                    knn.offer(ComparablePair(it.tupleId, AbsoluteInnerProductDistance.invoke(it[columns[0]] as Complex32VectorValue, groupSeedValue)))
+                    val distance = AbsoluteInnerProductDistance.invoke(it[columns[0]] as Complex32VectorValue, groupSeedValue)
+                    if (knn.size < knn.k || knn.peek()!!.second > distance)
+                        knn.offer(ComparablePair(it.tupleId, distance))
                 }
             }
             // get mean vector and TIDs
@@ -296,7 +298,10 @@ class GreedyGroupingIndex(override val name: Name.IndexName, override val parent
             tIdsOfGroup.forEach {
                 val value = tx.read(it)[columns[0]] as Complex32VectorValue
                 queryIndexes.forEach { queryIndex ->
-                    knns[queryIndex].offer(ComparablePair(it, predicate.distance.invoke(value, predicate.query[queryIndex])))
+                    val knn = knns[queryIndex]
+                    val distance = predicate.distance.invoke(value, predicate.query[queryIndex])
+                    if (knn.size < knn.k || knn.peek()!!.second > distance) // only create comp-pair if chance of success
+                        knn.offer(ComparablePair(it, distance))
                 }
             }
         }
