@@ -271,7 +271,7 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
         }
 
         LOGGER.debug("Learning from ${learningTIds.size} vectors...")
-        val (pq, signatures) = PQ.fromPermutedData(config.numSubspaces, config.numCentroids, preProcessedLearningData.toTypedArray(), type)
+        val (pq, signatures) = PQ.fromPermutedData(config.numSubspaces, config.numCentroids, preProcessedLearningData.toTypedArray(), type, this.config.seed)
         this.pq = pq
         pqStore.set(pq)
         val signaturesTidsLoc = HashMap<List<Int>, MutableList<Long>>()
@@ -283,7 +283,7 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
             }
             PQIndexConfig.ComplexStrategy.SPLIT -> {
                 LOGGER.debug("Learning imaginary part from ${learningTIds.size} vectors...")
-                val (pqImag, signaturesImag) = PQ.fromPermutedData(config.numSubspaces, config.numCentroids, preProcessedLearningDataImag!!.toTypedArray(), type)
+                val (pqImag, signaturesImag) = PQ.fromPermutedData(config.numSubspaces, config.numCentroids, preProcessedLearningDataImag!!.toTypedArray(), type, this.config.seed)
                 this.pqImag = pqImag
                 pqStoreImag.set(pqImag)
                 ((signatures zip signaturesImag) zip learningTIds).forEach { (sigRealImag, tid) ->

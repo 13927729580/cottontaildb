@@ -31,7 +31,7 @@ class PQ(val codebooks: Array<PQCodebook<out VectorValue<*>>>, val type: ColumnT
     companion object Serializer : org.mapdb.Serializer<PQ> {
         private val LOGGER: Logger = LoggerFactory.getLogger(PQ::class.java)
         const val MAX_ITERATIONS = 250
-        fun fromPermutedData(numSubspaces: Int, numCentroids: Int, permutedData: Array<out VectorValue<*>>, type: ColumnType<out VectorValue<*>>): Pair<PQ, Array<IntArray>> {
+        fun fromPermutedData(numSubspaces: Int, numCentroids: Int, permutedData: Array<out VectorValue<*>>, type: ColumnType<out VectorValue<*>>, seed: Long): Pair<PQ, Array<IntArray>> {
             LOGGER.debug("Initializing PQ from initial data.")
             // some assumptions. Some are for documentation, some are cheap enough to actually keep and check
             require(permutedData.all { it.logicalSize == permutedData[0].logicalSize && it::class.java == permutedData[0]::class.java })
@@ -54,10 +54,10 @@ class PQ(val codebooks: Array<PQCodebook<out VectorValue<*>>>, val type: ColumnT
                 LOGGER.trace("Processing subspace ${k + 1}")
                 val (codebook: PQCodebook<out VectorValue<*>>, signatures) = when (permutedData[0]) {
                     is RealVectorValue<*> -> {
-                        PQCodebook.learnFromRealData(permutedData.map { it as RealVectorValue<*> }.toTypedArray(), numCentroids, MAX_ITERATIONS)
+                        PQCodebook.learnFromRealData(permutedData.map { it as RealVectorValue<*> }.toTypedArray(), numCentroids, MAX_ITERATIONS, seed)
                     }
                     is ComplexVectorValue<*> -> {
-                        PQCodebook.learnFromComplexData(permutedData.map { it as ComplexVectorValue<*> }.toTypedArray(), numCentroids, MAX_ITERATIONS)
+                        PQCodebook.learnFromComplexData(permutedData.map { it as ComplexVectorValue<*> }.toTypedArray(), numCentroids, MAX_ITERATIONS, seed)
                     }
                     else -> {
                         error("Unknown type")
@@ -73,7 +73,7 @@ class PQ(val codebooks: Array<PQCodebook<out VectorValue<*>>>, val type: ColumnT
             return PQ(codebooks.map { it!! }.toTypedArray(), type) to subspaceSignatures
         }
 
-        fun fromPermutedData(numSubspaces: Int, numCentroids: Int, permutedData: Array<DoubleArray>, permutedExampleQueryData: Array<DoubleArray>? = null): Pair<PQ, Array<IntArray>> {
+        fun fromPermutedData(numSubspaces: Int, numCentroids: Int, permutedData: Array<DoubleArray>, permutedExampleQueryData: Array<DoubleArray>? = null, seed: Long): Pair<PQ, Array<IntArray>> {
             LOGGER.debug("Initializing PQ from initial data.")
             // some assumptions. Some are for documentation, some are cheap enough to actually keep and check
             require(permutedData.all { it.size == permutedData[0].size })
@@ -93,9 +93,9 @@ class PQ(val codebooks: Array<PQCodebook<out VectorValue<*>>>, val type: ColumnT
                 LOGGER.trace("Processing subspace ${k + 1}")
                 val (codebook, signatures) = if (permutedSubspaceExampleData != null) {
                     val inverseQCovMatrix = MatrixUtils.inverse(Covariance(permutedSubspaceExampleData[k], false).covarianceMatrix)
-                    PQCodebook.learnFromRealData(permutedData, inverseQCovMatrix, numCentroids, MAX_ITERATIONS)
+                    PQCodebook.learnFromRealData(permutedData, inverseQCovMatrix, numCentroids, MAX_ITERATIONS, seed)
                 } else {
-                    PQCodebook.learnFromRealData(permutedData, numCentroids, MAX_ITERATIONS)
+                    PQCodebook.learnFromRealData(permutedData, numCentroids, MAX_ITERATIONS, seed)
                 }
                 signatures.forEachIndexed { i, c ->
                     subspaceSignatures[i][k] = c

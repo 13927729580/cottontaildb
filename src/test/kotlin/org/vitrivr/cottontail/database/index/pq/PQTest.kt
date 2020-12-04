@@ -60,15 +60,15 @@ internal class PQTest {
             val permutedImagDbData = permuteData(imagDbData, permutation)
             val permutedImagQData = permuteData(imagQData, permutation)
 //        val pqRealTimed = measureTimedValue { PQ.fromPermutedData(numSubspaces, numCentroids, permutedRealDbData, permutedRealQData) }
-            val pqRealTimed = measureTimedValue { PQ.fromPermutedData(numSubspaces, numCentroids, permutedRealDbData, null) }
+            val pqRealTimed = measureTimedValue { PQ.fromPermutedData(numSubspaces, numCentroids, permutedRealDbData, null, seed) }
 //        val pqImagTimed = measureTimedValue { PQ.fromPermutedData(numSubspaces, numCentroids, permutedImagDbData, permutedImagQData) }
-            val pqImagTimed = measureTimedValue { PQ.fromPermutedData(numSubspaces, numCentroids, permutedImagDbData, null) }
+            val pqImagTimed = measureTimedValue { PQ.fromPermutedData(numSubspaces, numCentroids, permutedImagDbData, null, seed) }
             Triple(pqRealTimed, permutedRealDbData, permutedRealQData) to Triple(pqImagTimed, permutedImagDbData, permutedImagQData)
         }
         else {
             File(outFileDir, "permutation.csv").writeText("not permuted")
-            val pqRealTimed = measureTimedValue { PQ.fromPermutedData(numSubspaces, numCentroids, realDbData, null) }
-            val pqImagTimed = measureTimedValue { PQ.fromPermutedData(numSubspaces, numCentroids, imagDbData, null) }
+            val pqRealTimed = measureTimedValue { PQ.fromPermutedData(numSubspaces, numCentroids, realDbData, null, seed) }
+            val pqImagTimed = measureTimedValue { PQ.fromPermutedData(numSubspaces, numCentroids, imagDbData, null, seed) }
             Triple(pqRealTimed, realDbData, realQData) to Triple(pqImagTimed, imagDbData, imagQData)
         }
         val (pqRealTimed, realDataLearned, realQDataLearned) = pqRealTimedDataLearned
@@ -280,9 +280,9 @@ internal class PQTest {
                     v[permutation[i]]
                 }.toTypedArray())
             }.toTypedArray()
-            PQ.fromPermutedData(numSubspaces, numCentroids, permutedDbData, Complex64VectorColumnType) to permutedDbData
+            PQ.fromPermutedData(numSubspaces, numCentroids, permutedDbData, Complex64VectorColumnType, seed) to permutedDbData
         } else {
-            PQ.fromPermutedData(numSubspaces, numCentroids, dbData, Complex64VectorColumnType) to dbData
+            PQ.fromPermutedData(numSubspaces, numCentroids, dbData, Complex64VectorColumnType, seed) to dbData
         }
         val numPairs = 100000
         val header = listOf("i", "j",
