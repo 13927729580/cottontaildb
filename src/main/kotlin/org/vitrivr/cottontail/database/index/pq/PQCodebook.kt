@@ -5,6 +5,7 @@ import org.apache.commons.math3.linear.MatrixUtils.*
 import org.apache.commons.math3.ml.clustering.CentroidCluster
 import org.apache.commons.math3.ml.clustering.Clusterable
 import org.apache.commons.math3.ml.clustering.KMeansPlusPlusClusterer
+import org.apache.commons.math3.random.JDKRandomGenerator
 import org.apache.commons.math3.stat.correlation.Covariance
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -73,9 +74,10 @@ class PQCodebook<T: VectorValue<*>> (val centroids: Array<T>, val inverseDataCov
         }
 
         private fun clusterRealData(subspaceData: Array<DoubleArray>, inverseDataCovMatrix: RealMatrix, numCentroids: Int, maxIterations: Int): Pair<MutableList<CentroidCluster<Vector>>, IntArray> {
-            val clusterer = KMeansPlusPlusClusterer<Vector>(numCentroids, maxIterations) { a, b ->
+            val measure: (a: DoubleArray, b: DoubleArray) -> Double = { a, b ->
                 mahalanobisSqOpt(a, 0, a.size, b, 0, inverseDataCovMatrix)
             }
+            val clusterer = KMeansPlusPlusClusterer<Vector>(numCentroids, maxIterations, measure, JDKRandomGenerator(1234))
             LOGGER.debug("Learning...")
             val centroidClusters = clusterer.cluster(subspaceData.mapIndexed { i, value ->
                 Vector(value, i)
@@ -190,7 +192,7 @@ class PQCodebook<T: VectorValue<*>> (val centroids: Array<T>, val inverseDataCov
                 check(d >= -1e-5) {"Distance must be >= 0 but was $d"}
                 d.coerceAtLeast(0.0)
             }
-            val c = KMeansPlusPlusClusterer<Vector>(numCentroids, maxIterations, dist)
+            val c = KMeansPlusPlusClusterer<Vector>(numCentroids, maxIterations, dist, JDKRandomGenerator(1234))
 //            val c = KMeansPlusPlusClusterer<Vector>(numCentroids, maxIterations, distAbsIP) // this guy doesn't converge...
             val clusterResults = c.cluster(subspaceDataDoubles.mapIndexed { i, v -> Vector(v, i) })
             val signatures = IntArray(subspaceData.size)

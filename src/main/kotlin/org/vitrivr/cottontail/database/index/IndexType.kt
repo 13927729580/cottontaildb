@@ -12,6 +12,7 @@ import org.vitrivr.cottontail.database.index.lsh.superbit.SuperBitLSHIndexConfig
 import org.vitrivr.cottontail.database.index.lucene.LuceneIndex
 import org.vitrivr.cottontail.database.index.pq.PQIndex
 import org.vitrivr.cottontail.database.index.pq.PQIndexConfig
+import org.vitrivr.cottontail.database.index.random.RandomIndexConfig
 import org.vitrivr.cottontail.database.index.va.VAFIndex
 import org.vitrivr.cottontail.model.basics.ColumnDef
 import org.vitrivr.cottontail.model.basics.Name
@@ -28,7 +29,8 @@ enum class IndexType(val inexact: Boolean) {
     LSH(true), /* A locality sensitive hashing based index for approximate kNN lookup with Lp distance. */
     SUPERBIT_LSH(true), /* A locality sensitive hashing based index for approximate kNN lookup with cosine distance. */
     NONBUCKETING_SUPERBIT_LSH(true), /* A locality sensitive hashing based index for approximate kNN lookup with cosine distance. */
-    GG(true); /* A Greedy grouping index */
+    GG(true) /* A Greedy grouping index */,
+    RANDOM(true);
 
     /**
      * Opens an index of this [IndexType] using the given name and [Entity].
@@ -45,6 +47,7 @@ enum class IndexType(val inexact: Boolean) {
         VAF -> VAFIndex(name, entity, columns)
         PQ -> PQIndex(name, entity, columns, null)
         GG -> GreedyGroupingIndex(name, entity, columns, null)
+        RANDOM -> RandomIndex(name, entity, columns, null)
         else -> TODO()
     }
 
@@ -65,6 +68,7 @@ enum class IndexType(val inexact: Boolean) {
         VAF -> VAFIndex(name, entity, columns)
         PQ -> PQIndex(name, entity, columns, PQIndexConfig.fromParamsMap(params))
         GG -> GreedyGroupingIndex(name, entity, columns, GreedyGroupingIndexConfig.fromParamsMap(params))
+        RANDOM -> RandomIndex(name, entity, columns, RandomIndexConfig.fromParamMap(params))
         else -> TODO()
     }
 }

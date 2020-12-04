@@ -70,18 +70,19 @@ class MinHeapSelectionTest {
      */
     @ExperimentalTime
     @ParameterizedTest
-    @ValueSource(ints = [10, 100, 500, 1000, 10000, 1000000])
-    fun testSelectionSpeed(size: Int) {
+    @ValueSource(ints = [10, 100, 500, 1000])
+    fun testSelectionSpeed(k: Int) {
         val rng = SplittableRandom(1234L)
-        val longList = (0 until  5 * size).map { rng.nextLong() }
-        val doubleList = (0 until  5 * size).map { rng.nextDouble() }
-        val selectionOffer = MinHeapSelection<ComparablePair<Long, Double>>(size)
-        val selectionPeek = MinHeapSelection<ComparablePair<Long, Double>>(size)
+        val numEntries = 10000000
+        val longList = (0 until numEntries).map { rng.nextLong() }
+        val doubleList = (0 until numEntries).map { rng.nextDouble() }
+        val selectionOffer = MinHeapSelection<ComparablePair<Long, Double>>(k)
+        val selectionPeek = MinHeapSelection<ComparablePair<Long, Double>>(k)
         var timeOffer = Duration.ZERO
         var timePeek = Duration.ZERO
         for (i in longList.indices) {
             timeOffer += measureTime { selectionOffer.offer(ComparablePair(longList[i], doubleList[i])) }
-            timePeek += measureTime { if (selectionPeek.added < size || doubleList[i] < selectionPeek.peek()!!.second) selectionPeek.offer(ComparablePair(longList[i], doubleList[i])) }
+            timePeek += measureTime { if (selectionPeek.size < k || doubleList[i] < selectionPeek.peek()!!.second) selectionPeek.offer(ComparablePair(longList[i], doubleList[i])) }
         }
         println("timeOffer: $timeOffer")
         println("timePeek: $timePeek")

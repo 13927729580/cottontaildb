@@ -26,10 +26,16 @@ internal class PQTest {
     @ExperimentalTime
     @Test
     fun testPQ() {
-        val queryVectorsFile = File("src/test/resources/queryVectors.csv")
-        val vectorsFile = File("src/test/resources/sampledVectors90000.csv")
+//        val queryVectorsFile = File("src/test/resources/queryVectors.csv")
+//        val vectorsFile = File("src/test/resources/sampledVectors90000.csv")
+        val vectorsFile = File("/Users/gabuzi/switchdrive/Computer Science/master thesis/mrfdata/brain hf/new dict/sampledPhasenormDict90000.csv")
+//        val queryVectorsFile = File("src/test/resources/sampledQueryVectors.csv")
+//        val queryVectorsFile = File("/Users/gabuzi/switchdrive/Computer Science/master thesis/mrfdata/brain hf/query/query.mat_normed.csv")
+        val queryVectorsFile = File("/Users/gabuzi/switchdrive/Computer Science/master thesis/mrfdata/brain hf/query/query_phasesum0.mat_normed.csv")
         if (!vectorsFile.exists()) {
-            sampleVectorsFromCsv("src/test/resources/complexVectors.csv", vectorsFile.toString(), Random(1234L), 1e-2)
+//            sampleVectorsFromCsv("src/test/resources/complexVectors.csv", false, vectorsFile.toString(), Random(1234L), 1e-2)
+            sampleVectorsFromCsv("/Users/gabuzi/switchdrive/Computer Science/master thesis/mrfdata/brain hf/new dict/dict/dict_20pts_ETH_HF_phasesum0.mat_normed.csv.gz", true, vectorsFile.toString(), Random(1234L), 1e-2)
+
         }
         val dbData = getComplexVectorsFromFile(vectorsFile.toString(), 1, 20)
         val queryData = getComplexVectorsFromFile(queryVectorsFile.toString(), 2, 20)
