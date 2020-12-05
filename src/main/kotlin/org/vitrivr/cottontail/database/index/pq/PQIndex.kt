@@ -416,9 +416,8 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
         LOGGER.info("Index '${this.name}' Filtering. ApproxK: $approxK")
         // todo: test
 
-        // todo: reorder approx and precise as was done for GG
+        // todo: reorder approx and precise as was done for GG?
         //...
-        // todo: get rid of the comparable pair for all scans!!
 
         LOGGER.debug("Converting signature array")
         val sigLength = signatures[0].size
@@ -450,13 +449,14 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
             val knnNew = if (p.k == 1) MinSingleSelection<ComparablePair<Long, DoubleValue>>() else MinHeapSelection(p.k)
             knnNew
         }
+
         knnsExact.indices.toList().parallelStream().forEach { i ->
             var numTids = 0
             val knnNew = knnsExact[i]
             val knn = knns[i]
-            (0 until knn.size).forEach {
-                val tIds = knn[it].first
-                tIds.forEach { tid ->
+            for (j in 0 until knn.size) {
+                val signatureIndex = knn[j].first
+                tIds[signatureIndex].forEach { tid ->
                     numTids++
                     val exact = tx.read(tid)[columns[0]]!! as ComplexVectorValue<*>
                     val distance = p.distance(exact, p.query[i])
@@ -475,11 +475,11 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
 
 
     @ExperimentalUnsignedTypes
-    private fun scan(p: KnnPredicate<*>, pq1: PQ, sigReIm: UShortArray, sigLength: Int, k: Int = p.k): List<Selection<ComparablePair<LongArray, Float>>> {
+    private fun scan(p: KnnPredicate<*>, pq1: PQ, sigReIm: UShortArray, sigLength: Int, k: Int = p.k): List<Selection<ComparablePair<Int, Float>>> {
         LOGGER.debug("Scanning in DIRECT mode.")
-        val knnQueries = p.query.mapIndexed { _, q_ ->
+        val knnQueries = p.query.map {  q_ ->
             val q = q_ as Complex32VectorValue
-            (if (k == 1) MinSingleSelection<ComparablePair<LongArray, Float>>() else MinHeapSelection(k)) to q
+            (if (k == 1) MinSingleSelection<ComparablePair<Int, Float>>() else MinHeapSelection(k)) to q
         }
         val chunksize = 1
         if (chunksize > 1) {
@@ -487,9 +487,9 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
                 if (LOGGER.isTraceEnabled) LOGGER.trace("Precomputing IPs between query and centroids")
                 val queryCentroidIP = Array(knnQueriesChunk.size) { pq1.precomputeCentroidQueryIPComplexVectorValue(knnQueriesChunk[it].second) }
                 LOGGER.trace("Scanning signatures")
-                signatures.indices.forEach {
-                    knnQueriesChunk.indices.forEach { i ->
-                        processSignature(it, sigReIm, sigLength, queryCentroidIP[i], knnQueriesChunk[i].first)
+                for (j in 0 until signatures.size) {
+                    for (i in knnQueriesChunk.indices) {
+                        processSignature(j, sigReIm, sigLength, queryCentroidIP[i], knnQueriesChunk[i].first)
                     }
                 }
             }
@@ -499,8 +499,8 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
                 if (LOGGER.isTraceEnabled) LOGGER.trace("Precomputing IPs between query and centroids")
                 val queryCentroidIP =  pq1.precomputeCentroidQueryIPComplexVectorValue(q)
                 if (LOGGER.isTraceEnabled) LOGGER.trace("Scanning signatures")
-                signatures.indices.forEach {
-                    processSignature(it, sigReIm, sigLength, queryCentroidIP, knn)
+                for (i in 0 until signatures.size) {
+                    processSignature(i, sigReIm, sigLength, queryCentroidIP, knn)
                 }
             }
         }
@@ -509,20 +509,19 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
     //todo: move to local method as soon as kotlin supports inline local funcs
     //      but keep outside for now because of overhead (local funcs are objects which are instantiated
     //      whenever the parent func is called!)
-    private inline fun processSignature(signatureIndex: Int, sigReIm: UShortArray, sigLength: Int, queryCentroidIP: PQCentroidQueryIPComplexVectorValue, knn: Selection<ComparablePair<LongArray, Float>>) {
+    private inline fun processSignature(signatureIndex: Int, sigReIm: UShortArray, sigLength: Int, queryCentroidIP: PQCentroidQueryIPComplexVectorValue, knn: Selection<ComparablePair<Int, Float>>) {
         val sigOffset = signatureIndex * sigLength // offset into sign array
-        val tidOfSig = tIds[signatureIndex]
         val absIPSqApprox = queryCentroidIP.approximateIP(sigReIm, sigOffset, sigLength).abs().value
         if (knn.size < knn.k || knn.peek()!!.second > -absIPSqApprox) // do we really need to create a new pair every single time?
-            knn.offer(ComparablePair(tidOfSig, -absIPSqApprox))
+            knn.offer(ComparablePair(signatureIndex, -absIPSqApprox))
     }
 
 
-    private fun scanSplit(p: KnnPredicate<*>, pqReal: PQ, pqImag: PQ, sigReIm: UShortArray, sigLength: Int, k: Int = p.k): List<Selection<ComparablePair<LongArray, Float>>> {
+    private fun scanSplit(p: KnnPredicate<*>, pqReal: PQ, pqImag: PQ, sigReIm: UShortArray, sigLength: Int, k: Int = p.k): List<Selection<ComparablePair<Int, Float>>> {
         LOGGER.debug("Scanning in SPLIT mode.")
-        val knnQueries = p.query.mapIndexed { _, q_ ->
+        val knnQueries = p.query.map { q_ ->
             val q = q_ as Complex32VectorValue
-            (if (k == 1) MinSingleSelection<ComparablePair<LongArray, Float>>() else MinHeapSelection(k)) to q
+            (if (k == 1) MinSingleSelection<ComparablePair<Int, Float>>() else MinHeapSelection(k)) to q
         }
         val chunksize = 1
         if (chunksize > 1) {
@@ -538,9 +537,9 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
                     ).toTypedArray()
                 }
                 if (LOGGER.isTraceEnabled) LOGGER.trace("Scanning signatures")
-                signatures.indices.forEach {
-                    knnQueriesChunk.indices.forEach { i ->
-                        processSignatureSplit(it, sigReIm, sigLength,
+                for (j in 0 until signatures.size) {
+                    for (i in knnQueriesChunk.indices) {
+                        processSignatureSplit(j, sigReIm, sigLength,
                                 queryCentroidIP[i][0],
                                 queryCentroidIP[i][1],
                                 queryCentroidIP[i][2],
@@ -558,8 +557,8 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
                 val queryCentroidIPRealImag =  pqReal.precomputeCentroidQueryImagIPFloat(q)
                 val queryCentroidIPImagReal =  pqImag.precomputeCentroidQueryRealIPFloat(q)
                 if (LOGGER.isTraceEnabled) LOGGER.trace("Scanning signatures")
-                signatures.indices.forEach {
-                    processSignatureSplit(it, sigReIm, sigLength,
+                for (i in 0 until signatures.size) {
+                    processSignatureSplit(i, sigReIm, sigLength,
                             queryCentroidIPRealReal,
                             queryCentroidIPImagImag,
                             queryCentroidIPRealImag,
@@ -578,9 +577,8 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
                                              queryCentroidIPImagImag: PQCentroidQueryIPFloat,
                                              queryCentroidIPRealImag: PQCentroidQueryIPFloat,
                                              queryCentroidIPImagReal: PQCentroidQueryIPFloat,
-                                             knn: Selection<ComparablePair<LongArray, Float>>) {
+                                             knn: Selection<ComparablePair<Int, Float>>) {
         val sigOffset = signatureIndex * sigLength // offset into sign array
-        val tidOfSig = tIds[signatureIndex]
         val lengthRealOrImag = sigLength / 2
         val absIPSqApprox = ((
                 queryCentroidIPRealReal.approximateIP(sigReIm, sigOffset, lengthRealOrImag)
@@ -591,6 +589,6 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
                 ).pow(2)
                 )
         if (knn.size < knn.k || knn.peek()!!.second > -absIPSqApprox) // do we really need to create a new pair every single time?
-            knn.offer(ComparablePair(tidOfSig, -absIPSqApprox))
+            knn.offer(ComparablePair(signatureIndex, -absIPSqApprox))
     }
 }
