@@ -391,29 +391,10 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
     override fun filter(predicate: Predicate, tx: Entity.Tx): Recordset {
         require(canProcess(predicate)) {"The supplied predicate $predicate cannot be processed by index ${this.name}"}
         val p = predicate as KnnPredicate<*>
-        val paramName = "approxK"
-        val approxK = if (p.hint is KnnPredicateHint.KnnIndexNamePredicateHint) {
-            val v = p.hint.parameters[paramName]
-            // todo: try to find override param...
-            if (v != null) {
-                LOGGER.debug("Found '$paramName' override parameter.")
-                val vNum = v.toIntOrNull()
-                if (vNum != null) {
-                    LOGGER.info("Found '$paramName' override parameter with value '$vNum'.")
-                    vNum
-                } else {
-                    LOGGER.info("Found '$paramName' override parameter '$v' but could not parse it as int.")
-                    config.kApproxScan
-                }
-            } else {
-                config.kApproxScan
-            }
-        }
-        else {
-            config.kApproxScan
-        }
+        val approxK = parseIntOverrideParameter(p, "approxK", config.kApproxScan)
+        val chunksize = parseIntOverrideParameter(p, "chunksize", 1)
 
-        LOGGER.info("Index '${this.name}' Filtering. ApproxK: $approxK")
+        LOGGER.info("Index '${this.name}' Filtering ${p.query.size} queries. ApproxK: $approxK, Chunksize: $chunksize")
         // todo: test
 
         // todo: reorder approx and precise as was done for GG?
@@ -433,10 +414,10 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
 
         val knns = when (config.complexStrategy) {
             PQIndexConfig.ComplexStrategy.DIRECT -> {
-                scan(p, pq, sigReIm, sigLength, k = approxK)
+                scan(p, pq, sigReIm, sigLength, k = approxK, chunksize = chunksize)
             }
             PQIndexConfig.ComplexStrategy.SPLIT -> {
-                scanSplit(p, pq, pqImag, sigReIm, sigLength, k = approxK)
+                scanSplit(p, pq, pqImag, sigReIm, sigLength, k = approxK, chunksize = chunksize)
             }
         }
         // get exact distances...
@@ -473,15 +454,36 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
         return KnnUtilities.selectToRecordset(this.produces.first(), knnsExact)
     }
 
+    private fun parseIntOverrideParameter(p: KnnPredicate<*>, paramName: String, default: Int): Int {
+        return if (p.hint is KnnPredicateHint.KnnIndexNamePredicateHint) {
+            val v = p.hint.parameters[paramName]
+            // todo: try to find override param...
+            if (v != null) {
+                LOGGER.debug("Found '$paramName' override parameter.")
+                val vNum = v.toIntOrNull()
+                if (vNum != null) {
+                    LOGGER.info("Found '$paramName' override parameter with value '$vNum'.")
+                    vNum
+                } else {
+                    LOGGER.info("Found '$paramName' override parameter '$v' but could not parse it as int.")
+                    default
+                }
+            } else {
+                default
+            }
+        } else {
+            default
+        }
+    }
+
 
     @ExperimentalUnsignedTypes
-    private fun scan(p: KnnPredicate<*>, pq1: PQ, sigReIm: UShortArray, sigLength: Int, k: Int = p.k): List<Selection<ComparablePair<Int, Float>>> {
+    private fun scan(p: KnnPredicate<*>, pq1: PQ, sigReIm: UShortArray, sigLength: Int, k: Int = p.k, chunksize: Int): List<Selection<ComparablePair<Int, Float>>> {
         LOGGER.debug("Scanning in DIRECT mode.")
         val knnQueries = p.query.map {  q_ ->
             val q = q_ as Complex32VectorValue
             (if (k == 1) MinSingleSelection<ComparablePair<Int, Float>>() else MinHeapSelection(k)) to q
         }
-        val chunksize = 1
         if (chunksize > 1) {
             knnQueries.chunked(chunksize).parallelStream().forEach { knnQueriesChunk ->
                 if (LOGGER.isTraceEnabled) LOGGER.trace("Precomputing IPs between query and centroids")
@@ -517,13 +519,12 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
     }
 
 
-    private fun scanSplit(p: KnnPredicate<*>, pqReal: PQ, pqImag: PQ, sigReIm: UShortArray, sigLength: Int, k: Int = p.k): List<Selection<ComparablePair<Int, Float>>> {
+    private fun scanSplit(p: KnnPredicate<*>, pqReal: PQ, pqImag: PQ, sigReIm: UShortArray, sigLength: Int, k: Int = p.k, chunksize: Int): List<Selection<ComparablePair<Int, Float>>> {
         LOGGER.debug("Scanning in SPLIT mode.")
         val knnQueries = p.query.map { q_ ->
             val q = q_ as Complex32VectorValue
             (if (k == 1) MinSingleSelection<ComparablePair<Int, Float>>() else MinHeapSelection(k)) to q
         }
-        val chunksize = 1
         if (chunksize > 1) {
             knnQueries.chunked(chunksize).parallelStream().forEach { knnQueriesChunk ->
                 if (LOGGER.isTraceEnabled) LOGGER.trace("Precomputing IPs between query and centroids")
