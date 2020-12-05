@@ -123,7 +123,7 @@ class RandomIndex(override val name: Name.IndexName, override val parent: Entity
             /* Guard: Only process predicates that are supported. */
             require(this.canProcess(predicate)) { throw QueryException.UnsupportedPredicateException("Index '${this.name}' does not support the provided predicate.") }
 
-            LOGGER.debug("RandomIndex ${this.name.simple} Filtering.")
+            LOGGER.debug("RandomIndex ${this.name.simple} Filtering ${predicate.query.size} queries.")
 
             val knns = filterParallel(predicate, tx)
 
