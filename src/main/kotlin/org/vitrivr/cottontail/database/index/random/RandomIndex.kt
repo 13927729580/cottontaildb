@@ -1,15 +1,15 @@
-package org.vitrivr.cottontail.database.index
+package org.vitrivr.cottontail.database.index.random
 
 import org.mapdb.DBMaker
-import org.mapdb.HTreeMap
 import org.mapdb.Serializer
 import org.slf4j.LoggerFactory
 import org.vitrivr.cottontail.database.column.Column
 import org.vitrivr.cottontail.database.column.ColumnType
 import org.vitrivr.cottontail.database.entity.Entity
 import org.vitrivr.cottontail.database.events.DataChangeEvent
+import org.vitrivr.cottontail.database.index.Index
+import org.vitrivr.cottontail.database.index.IndexType
 import org.vitrivr.cottontail.database.index.lsh.LSHIndex
-import org.vitrivr.cottontail.database.index.random.RandomIndexConfig
 import org.vitrivr.cottontail.database.queries.components.KnnPredicate
 import org.vitrivr.cottontail.database.queries.components.Predicate
 import org.vitrivr.cottontail.database.queries.planning.cost.Cost
@@ -20,6 +20,7 @@ import org.vitrivr.cottontail.math.knn.metrics.RealInnerProductDistance
 import org.vitrivr.cottontail.math.knn.selection.ComparablePair
 import org.vitrivr.cottontail.math.knn.selection.MinHeapSelection
 import org.vitrivr.cottontail.math.knn.selection.MinSingleSelection
+import org.vitrivr.cottontail.math.knn.selection.Selection
 import org.vitrivr.cottontail.model.basics.ColumnDef
 import org.vitrivr.cottontail.model.basics.Name
 import org.vitrivr.cottontail.model.basics.Record
@@ -32,6 +33,8 @@ import org.vitrivr.cottontail.model.values.types.ComplexVectorValue
 import org.vitrivr.cottontail.utilities.extensions.write
 import java.nio.file.Path
 import java.util.*
+import java.util.concurrent.Callable
+import java.util.concurrent.Executors
 
 /**
  * Represents a random index in the Cottontail DB data model. An [Index] belongs to an [Entity] and can be used to
@@ -120,33 +123,59 @@ class RandomIndex(override val name: Name.IndexName, override val parent: Entity
             /* Guard: Only process predicates that are supported. */
             require(this.canProcess(predicate)) { throw QueryException.UnsupportedPredicateException("Index '${this.name}' does not support the provided predicate.") }
 
-            val recordset = Recordset(this.produces, (predicate.k * predicate.query.size).toLong())
+            LOGGER.debug("RandomIndex ${this.name.simple} Filtering.")
 
-            val knns = predicate.query.map { _ ->
-                if (predicate.k == 1) MinSingleSelection<ComparablePair<Long, DoubleValue>>() else MinHeapSelection(predicate.k)
-            }
+            val knns = filterParallel(predicate, tx)
 
-            predicate.query.indices.toList().parallelStream().forEach { i ->
-                val knn = knns[i]
-                val query = predicate.query[i] as Complex32VectorValue
-                tids.forEach { tid ->
-                    val distance = predicate.distance.invoke(query, tx.read(tid)[columns[0]] as Complex32VectorValue)
-                    if (knn.size < knn.k || knn.peek()!!.second > distance)
-                        knn.offer(ComparablePair(tid, distance))
-                }
-            }
-
-            /* Generate record set .*/
-
-            for (knn in knns) {
-                for (j in 0 until knn.size) {
-                    recordset.addRowUnsafe(knn[j].first, arrayOf(knn[j].second))
-                }
-            }
             LOGGER.debug("Done.")
             return KnnUtilities.selectToRecordset(this.produces.first(), knns)
         } else {
             throw QueryException.UnsupportedPredicateException("Index '${this.name}' (random Index) does not support predicates of type '${predicate::class.simpleName}'.")
+        }
+    }
+
+    private fun filterPartSimpleNoParallel(start: Int, endInclusive: Int, predicate: KnnPredicate<*>, tx: Entity.Tx): List<Selection<ComparablePair<Long, DoubleValue>>> {
+        LOGGER.trace("filtering from $start to $endInclusive")
+        val knns = predicate.query.map {
+            if (predicate.k == 1) MinSingleSelection<ComparablePair<Long, DoubleValue>>() else MinHeapSelection(predicate.k)
+        }
+        for (t in start .. endInclusive) {
+            val tid = tids[t]
+            val vec = tx.read(tid)[columns.first()] as ComplexVectorValue<*>
+            predicate.query.forEachIndexed { i, query ->
+                val distance = predicate.distance(vec, query)
+                if (knns[i].size < predicate.k || knns[i].peek()!!.second > distance) {
+                    knns[i].offer(ComparablePair(tid, distance))
+                }
+            }
+        }
+        LOGGER.trace("done filtering from $start to $endInclusive")
+        return knns
+    }
+
+    private fun filterParallel(predicate: KnnPredicate<*>, tx: Entity.Tx): List<Selection<ComparablePair<Long,DoubleValue>>> {
+        //split signatures to threads
+        val numThreads = Runtime.getRuntime().availableProcessors()
+        val elemsPerThread = tids.size / numThreads
+        LOGGER.debug("Filtering with $numThreads threads ($elemsPerThread TIDs per thread).")
+        val remaining = tids.size % numThreads
+        val exec = Executors.newFixedThreadPool(numThreads)
+        val tasks = (0 until numThreads).map {
+            Callable { filterPartSimpleNoParallel(it * elemsPerThread,
+                    it * elemsPerThread + elemsPerThread - 1 + if (it == numThreads - 1) remaining else 0,
+                    predicate, tx)}
+        }
+        val fresults = exec.invokeAll(tasks)
+        val res = fresults.map { it.get()}
+        exec.shutdownNow()
+        // merge
+        LOGGER.debug("Merging results")
+        return res.reduce { acc, perThread ->
+            (perThread zip acc).map { (knnPerThread, knnAcc) ->
+                knnAcc.apply {
+                    for (i in 0 until knnPerThread.size) offer(knnPerThread[i])
+                }
+            }
         }
     }
 

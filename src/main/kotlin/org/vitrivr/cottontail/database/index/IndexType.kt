@@ -12,6 +12,7 @@ import org.vitrivr.cottontail.database.index.lsh.superbit.SuperBitLSHIndexConfig
 import org.vitrivr.cottontail.database.index.lucene.LuceneIndex
 import org.vitrivr.cottontail.database.index.pq.PQIndex
 import org.vitrivr.cottontail.database.index.pq.PQIndexConfig
+import org.vitrivr.cottontail.database.index.random.RandomIndex
 import org.vitrivr.cottontail.database.index.random.RandomIndexConfig
 import org.vitrivr.cottontail.database.index.va.VAFIndex
 import org.vitrivr.cottontail.model.basics.ColumnDef
