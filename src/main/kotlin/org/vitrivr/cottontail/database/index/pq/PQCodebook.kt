@@ -92,10 +92,6 @@ class PQCodebook<T: VectorValue<*>> (val centroids: Array<T>, val dataCovariance
             return centroidClusters to signatures
         }
 
-        /** todo: apache commons clustering doesn't work with complex out of box, so need to probably roll our own...
-        *         we could re-interpret the doubles in complex way for distance calculation which would enable
-        *         us to use the commons clusterer
-        */
         fun learnFromComplexData(subspaceData: Array<out ComplexVectorValue<out Number>>, numCentroids: Int, maxIterations: Int, seed: Long): Pair<PQCodebook<out ComplexVectorValue<*>>, IntArray> {
             val dataCovMatrixCommons = complexCovarianceMatrix(subspaceData)
             val dataCovMatrix = fieldMatrixToVectorArray(dataCovMatrixCommons, subspaceData[0]::class)
