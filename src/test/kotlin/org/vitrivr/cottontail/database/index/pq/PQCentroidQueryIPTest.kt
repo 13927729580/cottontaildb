@@ -39,7 +39,7 @@ internal class PQCentroidQueryIPTest {
                 realData[n][permutation[i]]
             }
         }
-        val pqReal = PQ.fromPermutedData(numSubspaces, numCentroids, permutedRealData)
+        val pqReal = PQ.fromPermutedData(numSubspaces, numCentroids, permutedRealData, null, seed)
 
         println("Comparing precomputed and direct IP approximations")
         for (i in data.indices) {

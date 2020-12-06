@@ -2,6 +2,8 @@ package org.vitrivr.cottontail.database.index.pq
 
 import com.github.doyaaaaaken.kotlincsv.dsl.csvWriter
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 import org.vitrivr.cottontail.database.column.Complex64VectorColumnType
 import org.vitrivr.cottontail.math.knn.metrics.AbsoluteInnerProductDistance
 import org.vitrivr.cottontail.model.values.Complex64VectorValue
@@ -201,7 +203,7 @@ internal class PQTest {
         }
     }
 
-    private fun dumpCovarianceMatrixes(numSubspaces: Int, outFileDir: File, pqReal: Pair<PQ, Array<IntArray>>, pqImag: Pair<PQ, Array<IntArray>>) {
+    private fun dumpCovarianceMatrices(numSubspaces: Int, outFileDir: File, pqReal: Pair<PQ, Array<IntArray>>, pqImag: Pair<PQ, Array<IntArray>>) {
         TODO()
 //        for (k in 0 until numSubspaces) {
 //            csvWriter().open(File(outFileDir, "codebookReal$k.csv")) {
@@ -256,21 +258,24 @@ internal class PQTest {
         return permutedRealData
     }
 
-    @Test
-    fun testPQComplex() {
-        val queryVectorsFile = File("src/test/resources/queryVectors.csv")
-        val vectorsFile = File("src/test/resources/sampledVectors90000.csv")
+    @ParameterizedTest
+    @ValueSource(longs = [1234L, 5678L]) // only small differences (ca 1%)
+    fun testPQComplex(seed: Long) {
+//        val queryVectorsFile = File("src/test/resources/queryVectors.csv")
+        val queryVectorsFile = File("/Users/gabuzi/switchdrive/Computer Science/master thesis/mrfdata/brain hf/query/query_phasesum0.mat_normed.csv")
+//        val vectorsFile = File("src/test/resources/sampledVectors90000.csv")
+        val vectorsFile = File("/Users/gabuzi/switchdrive/Computer Science/master thesis/mrfdata/brain hf/new dict/sampledPhasenormDict90000.csv")
         if (!vectorsFile.exists()) {
-            sampleVectorsFromCsv("src/test/resources/complexVectors.csv", false, vectorsFile.toString(), Random(1234L), 1e-2)
+            sampleVectorsFromCsv("src/test/resources/complexVectors.csv", false, vectorsFile.toString(), Random(seed), 1e-2)
 
         }
         val dbData = getComplexVectorsFromFile(vectorsFile.toString(), 1, 20)
+        val queryData = getComplexVectorsFromFile(queryVectorsFile.toString(), 1, 20)
 
-        val permute = true
-        val numSubspaces = 20
+        val permute = false
+        val numSubspaces = 5
         val numCentroids = 64
-        val seed = 1234L
-        val outFileDir = File("testOut/pqComplex_refactoredPlusPlus/${getCurrentTimestamp()}_nss${numSubspaces}nc${numCentroids}seed${seed}Phasesum0WithoutQDataPermute${permute}/")
+        val outFileDir = File("testOut/pqCompl_matrixInverseTest/${getCurrentTimestamp()}_nss${numSubspaces}nc${numCentroids}seed${seed}Phasesum0WithoutQDataPermute${permute}NotInvertedCovM/")
         outFileDir.mkdirs()
         val rng = SplittableRandom(seed)
         val (pq , dataLearned) = if (permute) {

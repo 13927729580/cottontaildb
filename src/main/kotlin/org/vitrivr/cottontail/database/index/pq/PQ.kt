@@ -1,6 +1,5 @@
 package org.vitrivr.cottontail.database.index.pq
 
-import org.apache.commons.math3.linear.MatrixUtils
 import org.apache.commons.math3.stat.correlation.Covariance
 import org.mapdb.DataInput2
 import org.mapdb.DataOutput2
@@ -25,7 +24,6 @@ import org.vitrivr.cottontail.model.values.types.VectorValue
  * author: Gabriel Zihlmann
  * date: 25.8.2020
  * Roughly following Guo et al. 2015 - Quantization based Fast Inner Product Search
- * todo: How to serialize this, now that we have multiple possible types? Pass type as property and serialize it as well (ugly hack)?
  */
 class PQ(val codebooks: Array<PQCodebook<out VectorValue<*>>>, val type: ColumnType<out VectorValue<*>>) {
     companion object Serializer : org.mapdb.Serializer<PQ> {
@@ -92,8 +90,8 @@ class PQ(val codebooks: Array<PQCodebook<out VectorValue<*>>>, val type: ColumnT
             permutedSubspaceData.parallelStream().forEach { (k, permutedData) ->
                 LOGGER.trace("Processing subspace ${k + 1}")
                 val (codebook, signatures) = if (permutedSubspaceExampleData != null) {
-                    val inverseQCovMatrix = MatrixUtils.inverse(Covariance(permutedSubspaceExampleData[k], false).covarianceMatrix)
-                    PQCodebook.learnFromRealData(permutedData, inverseQCovMatrix, numCentroids, MAX_ITERATIONS, seed)
+                    val qCovMatrix = Covariance(permutedSubspaceExampleData[k], false).covarianceMatrix
+                    PQCodebook.learnFromRealData(permutedData, qCovMatrix, numCentroids, MAX_ITERATIONS, seed)
                 } else {
                     PQCodebook.learnFromRealData(permutedData, numCentroids, MAX_ITERATIONS, seed)
                 }
@@ -143,7 +141,7 @@ class PQ(val codebooks: Array<PQCodebook<out VectorValue<*>>>, val type: ColumnT
                         else -> TODO("Other types not yet supported")
                     }
                 }
-                val cov = it.inverseDataCovarianceMatrix //first dim are rows
+                val cov = it.dataCovarianceMatrix //first dim are rows
                 for (i in 0 until value.dimensionsPerSubspace) {
                     when (value.type) {
                         is Complex32VectorColumnType -> FixedComplex32VectorSerializer(value.dimensionsPerSubspace).serialize(out, cov[i] as Complex32VectorValue)
