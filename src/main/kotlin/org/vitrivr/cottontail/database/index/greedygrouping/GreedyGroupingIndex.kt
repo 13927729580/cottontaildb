@@ -28,6 +28,8 @@ import org.vitrivr.cottontail.model.values.types.ComplexVectorValue
 import org.vitrivr.cottontail.utilities.extensions.write
 import java.nio.file.Path
 import java.util.*
+import java.util.concurrent.Callable
+import java.util.concurrent.Executors
 
 class GreedyGroupingIndex(override val name: Name.IndexName, override val parent: Entity, override val columns: Array<ColumnDef<*>>,
                           config: GreedyGroupingIndexConfig? = null
@@ -166,17 +168,9 @@ class GreedyGroupingIndex(override val name: Name.IndexName, override val parent
             val groupSeedTid = remainingTIds.elementAt(rng.nextInt(remainingTIds.size))
             LOGGER.debug("Processing group ${groupsStore.size}. Grouping around TID $groupSeedTid.")
             val groupSeedValue = tx.read(groupSeedTid)[columns[0]] as Complex32VectorValue
-            val knn = MinHeapSelection<ComparablePair<Long, DoubleValue>>(groupSize)
-            //sequential access probably fastest...
             //by scanning all, we will also include the seed as it will have maximum similarity
             LOGGER.trace("Scanning remaining elements.")
-            tx.forEach {
-                if (!finishedTIds.contains(it.tupleId)) {
-                    val distance = AbsoluteInnerProductDistance.invoke(it[columns[0]] as Complex32VectorValue, groupSeedValue)
-                    if (knn.size < knn.k || knn.peek()!!.second > distance)
-                        knn.offer(ComparablePair(it.tupleId, distance))
-                }
-            }
+            val knn = scanParallel(groupSize, groupSeedValue, remainingTIds.toHashSet(), tx)
             // get mean vector and TIDs
             // update remaining and finished TIDs
             LOGGER.trace("Calculating mean and storing.")
@@ -197,6 +191,49 @@ class GreedyGroupingIndex(override val name: Name.IndexName, override val parent
         db.commit()
         loadGroupsFromDisk()
         LOGGER.info("Index ${name.simple} done rebuilding.")
+    }
+
+
+    private fun scanPartSimpleNoParallel(startTid: Long, endTidInclusive: Long, groupSize: Int, groupSeedvalue: Complex32VectorValue, remainingTIds: HashSet<Long>, tx: Entity.Tx): MinHeapSelection<ComparablePair<Long, DoubleValue>> {
+        LOGGER.trace("filtering from $startTid to $endTidInclusive")
+        val knn = MinHeapSelection<ComparablePair<Long, DoubleValue>>(groupSize)
+        // todo: bug?? Version that would scan via tx.forEach(startTid, endTidInclusive) and the skip via via finishedTids Hashset would never see Tid of value startTid, except for the very first one... Cottontail bug?
+        remainingTIds.forEach { tid ->
+            if (tid >= startTid && tid <= endTidInclusive) {
+                val r = tx.read(tid)
+                val vec = r[columns.first()] as ComplexVectorValue<*>
+                val distance = AbsoluteInnerProductDistance.invoke(vec, groupSeedvalue)
+                if (knn.size < groupSize || knn.peek()!!.second > distance) {
+                    knn.offer(ComparablePair(tid, distance))
+                }
+            }
+        }
+        LOGGER.trace("done filtering from $startTid to $endTidInclusive")
+        return knn
+    }
+
+    private fun scanParallel(groupSize: Int, groupSeedvalue: Complex32VectorValue, remainingTids: HashSet<Long>, tx: Entity.Tx): MinHeapSelection<ComparablePair<Long,DoubleValue>> {
+        val maxTid = tx.maxTupleId()
+        val numThreads = Runtime.getRuntime().availableProcessors()
+        val elemsPerThread = maxTid / numThreads
+        LOGGER.trace("Filtering with $numThreads threads ($elemsPerThread TIDs per thread).")
+        val remaining = maxTid % numThreads
+        val exec = Executors.newFixedThreadPool(numThreads)
+        val tasks = (0 until numThreads).map {
+            Callable { scanPartSimpleNoParallel(it * elemsPerThread + 1,
+                    it * elemsPerThread + elemsPerThread + if (it == numThreads - 1) remaining else 0,
+                    groupSize, groupSeedvalue, remainingTids, tx)}
+        }
+        val fresults = exec.invokeAll(tasks)
+        val res = fresults.map { it.get()}
+        exec.shutdownNow()
+        // merge
+        LOGGER.trace("Merging results")
+        return res.reduce { knnAcc, knnPerThread ->
+            knnAcc.apply {
+                for (i in 0 until knnPerThread.size) offer(knnPerThread[i])
+            }
+        }
     }
 
     /**
