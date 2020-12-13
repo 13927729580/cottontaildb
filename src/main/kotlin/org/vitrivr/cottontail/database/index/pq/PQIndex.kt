@@ -332,6 +332,7 @@ class PQIndex(override val name: Name.IndexName, override val parent: Entity, ov
             tx.forEach(startTid, endTidInclusive) { r ->
                 if (!ignoreTids.contains(r.tupleId)) {
                     val v = r[columns[0]] as ComplexVectorValue<*>
+                    // todo: this is slow! v.real() and v.imaginary() copy the data...
                     val signature = this.pq.getSignature(v.real()).toList() + this.pqImag.getSignature(v.imaginary()).toList()
                     res.add(r.tupleId to signature)
                 }

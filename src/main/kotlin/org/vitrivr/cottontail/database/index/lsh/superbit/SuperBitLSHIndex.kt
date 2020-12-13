@@ -66,7 +66,8 @@ class SuperBitLSHIndex<T : VectorValue<*>>(name: Name.IndexName, parent: Entity,
                 this.config = config
                 this.configOnDisk.set(config)
             } else {
-                throw StoreException("No config supplied, and the config from disk was also empty.")
+                LOGGER.warn("No config supplied and the config from disk was also empty. Usin dummy config. Delete this index ASAP.")
+                this.config = SuperBitLSHIndexConfig(1, 1, 123L, true, SuperBit.SamplingMethod.GAUSSIAN)
             }
         }
         else {

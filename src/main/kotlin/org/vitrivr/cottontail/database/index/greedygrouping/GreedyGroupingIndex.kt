@@ -154,6 +154,7 @@ class GreedyGroupingIndex(override val name: Name.IndexName, override val parent
         3. Build mean vector of those k in the group and store as group representation
         4. Don't do any PCA/SVD as we only have 18-25 ish dims...
         5. Repeat with a new randomly selected element from the remaining ones until no elements remain.
+        takes around 6h for 5000 groups on 9M vectors
          */
 
 
@@ -186,7 +187,10 @@ class GreedyGroupingIndex(override val name: Name.IndexName, override val parent
             groupMean /= DoubleValue(knn.size)
             groupsStore[FloatArray(groupMean.data.size) {groupMean.data[it].toFloat()}] = groupTids.toLongArray()
         }
-        check(groupsStore.size == config.numGroups) {"${name.simple} did not group into the expected number of groups (expected: ${config.numGroups}, actual: ${groupsStore.size})."}
+        // this is not always fulfilled because of ceildiv in groupsize!
+//        check(groupsStore.size == config.numGroups) {"${name.simple} did not group into the expected number of groups (expected: ${config.numGroups}, actual: ${groupsStore.size})."}
+        if(groupsStore.size != config.numGroups)
+            LOGGER.warn("${name.simple} did not group into the expected number of groups (expected: ${config.numGroups}, actual: ${groupsStore.size}).")
         LOGGER.debug("Commiting to disk.")
         db.commit()
         loadGroupsFromDisk()
