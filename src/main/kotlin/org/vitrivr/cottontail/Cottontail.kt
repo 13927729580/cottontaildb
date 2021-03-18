@@ -3,14 +3,18 @@ package org.vitrivr.cottontail
 import kotlinx.serialization.json.Json
 import org.vitrivr.cottontail.cli.Cli
 import org.vitrivr.cottontail.config.Config
-import org.vitrivr.cottontail.database.catalogue.Catalogue
-import org.vitrivr.cottontail.execution.ExecutionEngine
+import org.vitrivr.cottontail.database.catalogue.DefaultCatalogue
+import org.vitrivr.cottontail.database.general.DBOVersion
+import org.vitrivr.cottontail.legacy.VersionProber
+import org.vitrivr.cottontail.model.exceptions.DatabaseException
 import org.vitrivr.cottontail.server.grpc.CottontailGrpcServer
+import java.io.BufferedReader
+import java.io.InputStreamReader
 import java.nio.file.Files
-import java.nio.file.Path
 import java.nio.file.Paths
 import kotlin.system.exitProcess
 import kotlin.time.ExperimentalTime
+
 
 /**
  * Entry point for Cottontail DB demon and CLI.
@@ -19,14 +23,14 @@ import kotlin.time.ExperimentalTime
  */
 @ExperimentalTime
 fun main(args: Array<String>) {
-
     /** Check if only CLI should be started. */
     if (args.isNotEmpty() && args[0] in arrayOf("prompt", "cli")) {
         if (args.size < 3) {
-            println("To start the CLI start Cottontail DB use\n" + "$> cli [<host>] [<port>]")
-            exitProcess(1)
+            println("Starting CLI on default setup")
+            Cli().loop()
+            return
         }
-        Cli.loop(args[1], args[2].toInt())
+        Cli(args[1], args[2].toInt()).loop()
         return
     }
 
@@ -38,10 +42,22 @@ fun main(args: Array<String>) {
         Paths.get(args.first()) /* Start with default value. */
     }
 
+    /* Check if config file exists. */
+    if (!Files.isRegularFile(configPath)) {
+        System.err.println("Specified Cottontail DB configuration file $configPath does not exist. Cottontail DB will shut down.")
+        exitProcess(1)
+    }
+
     /* Load config file and start Cottontail DB. */
     Files.newBufferedReader(configPath).use { reader ->
         val config = Json.decodeFromString(Config.serializer(), reader.readText())
-        standalone(config)
+        try {
+            standalone(config)
+        } catch (e: Throwable) {
+            System.err.println("Failed to start Cottontail DB due to error:")
+            System.err.println(e.printStackTrace())
+            exitProcess(1)
+        }
     }
 }
 
@@ -52,24 +68,48 @@ fun main(args: Array<String>) {
  */
 @ExperimentalTime
 fun standalone(config: Config) {
+    /* Prepare Log4j logging facilities. */
+    if (config.logConfig != null && Files.isRegularFile(config.logConfig)) {
+        System.getProperties().setProperty("log4j.configurationFile", config.logConfig.toString())
+    }
+
+    /* Create root-folder, if it doesn't exist yet. */
+    if (!Files.exists(config.root)) {
+        Files.createDirectories(config.root)
+    }
+
+    /* Check catalogue version. */
+    val detected = VersionProber(config).probe(config.root)
+    if (detected != VersionProber.EXPECTED && detected != DBOVersion.UNDEFINED) {
+        System.err.println("Version mismatch: Trying to open an incompatible Cottontail DB catalogue version. Run system migration to upgrade catalogue (detected = $detected, expected = ${VersionProber.EXPECTED}, path = ${config.root}).")
+        exitProcess(1)
+    }
+
     /* Instantiate Catalogue, execution engine and gRPC server. */
-    val catalogue = Catalogue(config)
-    val engine = ExecutionEngine(config.execution)
-    val server = CottontailGrpcServer(config.server, catalogue, engine)
+    val catalogue = DefaultCatalogue(config)
 
-    /* Start gRPC Server. */
+    /* Start gRPC Server and print message. */
+    val server = CottontailGrpcServer(config, catalogue)
     server.start()
+    println("Cottontail DB server is up and running at port ${config.server.port}! Hop along... (catalogue: ${catalogue.version}, pid: ${ProcessHandle.current().pid()})")
 
-    /* Start CLI or wait for server to complete. */
+    /* Start CLI (if configured). */
     if (config.cli) {
-        /* Start local cli */
-        Cli.cottontailServer = server
-        Cli.loop("localhost", config.server.port)
+        Cli("localhost", config.server.port).loop()
+        server.stop()
     } else {
-        while (server.isRunning) {
-            Thread.sleep(1000)
+        /* Wait for gRPC server to be stopped. */
+        val obj = BufferedReader(InputStreamReader(System.`in`))
+        loop@ while (server.isRunning) {
+            when (obj.readLine()) {
+                "exit", "quit", "stop" -> break
+            }
+            Thread.sleep(100)
         }
     }
+
+    /* Print shutdown message. */
+    println("Cottontail DB was shut down. Have a binky day!")
 }
 
 /**
@@ -80,10 +120,20 @@ fun standalone(config: Config) {
  */
 @ExperimentalTime
 fun embedded(config: Config): CottontailGrpcServer {
+    /* Create root-folder, if it doesn't exist yet. */
+    if (!Files.exists(config.root)) {
+        Files.createDirectories(config.root)
+    }
+
+    /* Check catalogue version. */
+    val detected = VersionProber(config).probe(config.root)
+    if (detected != VersionProber.EXPECTED && detected != DBOVersion.UNDEFINED) {
+        throw DatabaseException.VersionMismatchException(VersionProber.EXPECTED, detected)
+    }
+
     /* Instantiate Catalogue, execution engine and gRPC server. */
-    val catalogue = Catalogue(config)
-    val engine = ExecutionEngine(config.execution)
-    val server = CottontailGrpcServer(config.server, catalogue, engine)
+    val catalogue = DefaultCatalogue(config)
+    val server = CottontailGrpcServer(config, catalogue)
 
     /* Start gRPC Server and return object. */
     server.start()
