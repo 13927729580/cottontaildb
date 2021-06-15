@@ -27,7 +27,7 @@ import org.vitrivr.cottontail.database.queries.projection.Projection
 import org.vitrivr.cottontail.database.queries.sort.SortOrder
 import org.vitrivr.cottontail.database.schema.SchemaTx
 import org.vitrivr.cottontail.grpc.CottontailGrpc
-import org.vitrivr.cottontail.math.knn.metrics.Distances
+import org.vitrivr.cottontail.math.knn.kernels.Distances
 import org.vitrivr.cottontail.model.basics.Name
 import org.vitrivr.cottontail.model.basics.Record
 import org.vitrivr.cottontail.model.basics.Type
@@ -125,15 +125,49 @@ class GrpcQueryBinder constructor(val catalogue: Catalogue) {
             val entityTx = context.txn.getTx(entity) as EntityTx
 
             /* Parse columns to INSERT. */
-            val values = insert.insertsList.map {
-                val columnName = it.column.fqn()
-                val column = entityTx.columnForName(columnName).columnDef
-                column to it.value.toValue(column)
+            val columns = Array<ColumnDef<*>>(insert.elementsCount) {
+                val columnName = insert.elementsList[it].column.fqn()
+                entityTx.columnForName(columnName).columnDef
+            }
+            val values = Array<Value?>(insert.elementsCount) {
+                insert.elementsList[it].value.toValue(columns[it])
             }
 
             /* Create and return INSERT-clause. */
-            val record = context.records.bind(StandaloneRecord(-1L, values))
+            val record = context.records.bind(StandaloneRecord(-1L, columns, values))
             context.register(InsertLogicalOperatorNode(context.nextGroupId(), entity, mutableListOf(record)))
+        } catch (e: DatabaseException.ColumnDoesNotExistException) {
+            throw QueryException.QueryBindException("Failed to bind '${e.column}'. Column does not exist!")
+        }
+    }
+
+    /**
+     * Binds the given [CottontailGrpc.InsertMessage] to the database objects and thereby creates
+     * a tree of [OperatorNode.Logical]s.
+     *
+     * @param insert The [ CottontailGrpc.InsertMessage] that should be bound.
+     * @param context The [QueryContext] used for binding.
+     * @throws QueryException.QuerySyntaxException If [CottontailGrpc.Query] is structurally incorrect.
+     */
+    fun bind(insert: CottontailGrpc.BatchInsertMessage, context: QueryContext) {
+        try {
+            /* Parse entity for BATCH INSERT. */
+            val entity = parseAndBindEntity(insert.from.scan.entity, context)
+            val entityTx = context.txn.getTx(entity) as EntityTx
+
+            /* Parse columns to BATCH INSERT. */
+            val columns = Array<ColumnDef<*>>(insert.columnsCount) {
+                val columnName = insert.columnsList[it].fqn()
+                entityTx.columnForName(columnName).columnDef
+            }
+
+            /* Parse records to BATCH INSERT. */
+            val records = insert.insertsList.map { i ->
+                context.records.bind(StandaloneRecord(-1L, columns, Array<Value?>(i.valuesCount) {
+                    i.valuesList[it].toValue(columns[it])
+                }))
+            }.toMutableList()
+            context.register(InsertLogicalOperatorNode(context.nextGroupId(), entity, records))
         } catch (e: DatabaseException.ColumnDoesNotExistException) {
             throw QueryException.QueryBindException("Failed to bind '${e.column}'. Column does not exist!")
         }
@@ -156,12 +190,14 @@ class GrpcQueryBinder constructor(val catalogue: Catalogue) {
             val entityTx = context.txn.getTx(entity) as EntityTx
 
             /* Parse columns to INSERT. */
-            val values = insert.insertsList.map {
-                val columnName = it.column.fqn()
-                val column = entityTx.columnForName(columnName).columnDef
-                column to it.value.toValue(column)
+            val columns = Array<ColumnDef<*>>(insert.elementsCount) {
+                val columnName = insert.elementsList[it].column.fqn()
+                entityTx.columnForName(columnName).columnDef
             }
-            return context.records.bind(StandaloneRecord(-1L, values))
+            val values = Array<Value?>(insert.elementsCount) {
+                insert.elementsList[it].value.toValue(columns[it])
+            }
+            return context.records.bind(StandaloneRecord(-1L, columns, values))
         } catch (e: DatabaseException.ColumnDoesNotExistException) {
             throw QueryException.QueryBindException("Failed to bind '${e.column}'. Column does not exist!")
         }
@@ -182,7 +218,7 @@ class GrpcQueryBinder constructor(val catalogue: Catalogue) {
             if (root !is EntityScanLogicalOperatorNode) {
                 throw QueryException.QueryBindException("Failed to bind query. UPDATES only support entity sources as FROM-clause.")
             }
-            val entity: Entity = root.entity
+            val entity: EntityTx = root.entity
 
             /* Parse values to update. */
             val values = update.updatesList.map {
@@ -221,7 +257,7 @@ class GrpcQueryBinder constructor(val catalogue: Catalogue) {
         if (from !is EntityScanLogicalOperatorNode) {
             throw QueryException.QueryBindException("Failed to bind query. UPDATES only support entity sources as FROM-clause.")
         }
-        val entity: Entity = from.entity
+        val entity: EntityTx = from.entity
         var root: OperatorNode.Logical = from
 
         /* Create WHERE-clause. */
@@ -249,13 +285,13 @@ class GrpcQueryBinder constructor(val catalogue: Catalogue) {
                 val entity = parseAndBindEntity(from.scan.entity, context)
                 val entityTx = context.txn.getTx(entity) as EntityTx
                 val columns = entityTx.listColumns().map { it.columnDef }.toTypedArray()
-                EntityScanLogicalOperatorNode(context.nextGroupId(), entity = entity, columns = columns)
+                EntityScanLogicalOperatorNode(context.nextGroupId(), entity = entityTx, columns = columns)
             }
             CottontailGrpc.From.FromCase.SAMPLE -> {
                 val entity = parseAndBindEntity(from.scan.entity, context)
                 val entityTx = context.txn.getTx(entity) as EntityTx
                 val columns = entityTx.listColumns().map { it.columnDef }.toTypedArray()
-                EntitySampleLogicalOperatorNode(context.nextGroupId(), entity = entity, columns = columns, size = from.sample.size, seed = from.sample.seed)
+                EntitySampleLogicalOperatorNode(context.nextGroupId(), entity = entityTx, columns = columns, size = from.sample.size, seed = from.sample.seed)
             }
             CottontailGrpc.From.FromCase.SUBSELECT -> bind(from.subSelect, context) /* Sub-select. */
             else -> throw QueryException.QuerySyntaxException("Invalid or missing FROM-clause in query.")
@@ -446,33 +482,53 @@ class GrpcQueryBinder constructor(val catalogue: Catalogue) {
     private fun parseAndBindKnn(input: OperatorNode.Logical, knn: CottontailGrpc.Knn, context: QueryContext): OperatorNode.Logical {
         val columnName = knn.attribute.fqn()
         val column = input.findUniqueColumnForName(columnName)
-        val distance = Distances.valueOf(knn.distance.name).kernel
+        val distance = Distances.valueOf(knn.distance.name)
         val hint = knn.hint.toHint()
         val query: Pair<VectorValue<*>, VectorValue<*>?> = when (column.type) {
             is Type.DoubleVector -> Pair(
                 knn.query.toDoubleVectorValue(), if (knn.hasWeight()) {
-                    knn.weight.toDoubleVectorValue()
+                    /* Filter 1.0 weights. */
+                    if (knn.weight.doubleVector.vectorList.all { it == 1.0 }) {
+                        null
+                    } else {
+                        knn.weight.toDoubleVectorValue()
+                    }
                 } else {
                     null
                 }
             )
             is Type.FloatVector -> Pair(
                 knn.query.toFloatVectorValue(), if (knn.hasWeight()) {
-                    knn.weight.toFloatVectorValue()
+                    /* Filter 1.0f weights. */
+                    if (knn.weight.floatVector.vectorList.all { it == 1.0f }) {
+                        null
+                    } else {
+                        knn.weight.toFloatVectorValue()
+                    }
                 } else {
                     null
                 }
             )
             is Type.LongVector -> Pair(
                 knn.query.toLongVectorValue(), if (knn.hasWeight()) {
-                    knn.weight.toLongVectorValue()
+                    /* Filter 1L weights. */
+                    if (knn.weight.longVector.vectorList.all { it == 1L }) {
+                        null
+                    } else {
+                        knn.weight.toLongVectorValue()
+                    }
                 } else {
                     null
                 }
             )
             is Type.IntVector -> Pair(
                 knn.query.toIntVectorValue(), if (knn.hasWeight()) {
-                    knn.weight.toIntVectorValue()
+                    /* Filter 1 weights. */
+                    if (knn.weight.intVector.vectorList.all { it == 1 }) {
+                        null
+                    } else {
+                        knn.weight.toIntVectorValue()
+                    }
                 } else {
                     null
                 }

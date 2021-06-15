@@ -9,7 +9,7 @@ import org.vitrivr.cottontail.model.basics.Name
  * This is a [TxSnapshot] implementation for [EntityTx]
  *
  * @author Ralph Gasser
- * @version 1.0.0
+ * @version 1.1.0
  */
 interface EntityTxSnapshot : TxSnapshot {
     /** The state of the enclosing [Entity] as of the start of the [EntityTx]. */

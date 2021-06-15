@@ -6,12 +6,16 @@ import it.unimi.dsi.fastutil.objects.ObjectBigArrayBigList
 import org.vitrivr.cottontail.database.column.ColumnDef
 import org.vitrivr.cottontail.database.queries.predicates.Predicate
 import org.vitrivr.cottontail.database.queries.predicates.bool.BooleanPredicate
-import org.vitrivr.cottontail.model.basics.*
+import org.vitrivr.cottontail.model.basics.Filterable
+import org.vitrivr.cottontail.model.basics.Record
+import org.vitrivr.cottontail.model.basics.Scanable
+import org.vitrivr.cottontail.model.basics.TupleId
 import org.vitrivr.cottontail.model.values.types.Value
 import org.vitrivr.cottontail.utilities.extensions.read
 import org.vitrivr.cottontail.utilities.extensions.write
 import java.util.*
 import java.util.concurrent.locks.StampedLock
+import kotlin.math.min
 
 /**
  * A [Recordset] as returned and processed by Cottontail DB. [Recordset]s are tables. A [Recordset]'s
@@ -23,7 +27,7 @@ import java.util.concurrent.locks.StampedLock
  * @see org.vitrivr.cottontail.database.entity.DefaultEntity
  *
  * @author Ralph Gasser
- * @version 1.6.0
+ * @version 1.7.0
  */
 class Recordset(val columns: Array<ColumnDef<*>>, capacity: Long = 250L) : Scanable, Filterable {
     /** List of all the [Record]s contained in this [Recordset] (TupleId -> Record). */
@@ -207,18 +211,29 @@ class Recordset(val columns: Array<ColumnDef<*>>, capacity: Long = 250L) : Scana
      * @param columns The [ColumnDef] to include in the iteration.
      * @return [Iterator] of this [Recordset].
      */
-    override fun scan(columns: Array<ColumnDef<*>>): Iterator<Record> =
-        this.scan(columns, 0L until this.rowCount)
+    override fun scan(columns: Array<ColumnDef<*>>): Iterator<Record> = this.scan(columns, 0, 1)
 
     /**
      * Returns an [Iterator] for this [Recordset] for the given [columns] and the given [range].
      * The [Iterator] is NOT thread safe.
      *
      * @param columns The [ColumnDef] to include in the iteration.
-     * @param range The range to iterate over.
+     * @param partitionIndex The [partitionIndex] for this [scan] call.
+     * @param partitions The total number of partitions for this [scan] call.
      * @return [Iterator] of this [Recordset].
      */
-    override fun scan(columns: Array<ColumnDef<*>>, range: LongRange) = object : Iterator<Record> {
+    override fun scan(columns: Array<ColumnDef<*>>, partitionIndex: Int, partitions: Int) = object : Iterator<Record> {
+
+        /** The [LongRange] to iterate over. */
+        private val range: LongRange
+
+        init {
+            val maximum: Long = this@Recordset.rowCount
+            val partitionSize: Long = Math.floorDiv(maximum, partitions.toLong()) + 1L
+            val start: Long = partitionIndex * partitionSize
+            val end = min(((partitionIndex + 1) * partitionSize), maximum)
+            this.range = start until end
+        }
 
         /** Internal pointer kept as reference to the next [Record]. */
         @Volatile
@@ -292,6 +307,14 @@ class Recordset(val columns: Array<ColumnDef<*>>, capacity: Long = 250L) : Scana
          * @return True if record contains the [ColumnDef], false otherwise.
          */
         override fun has(column: ColumnDef<*>): Boolean = this.map.containsKey(column)
+
+        /**
+         * Returns column index of the given [ColumnDef] within this [Record]. Returns -1 if [ColumnDef] is not contained
+         *
+         * @param column The [ColumnDef] to check.
+         * @return The column index or -1. of [ColumnDef] is not part of this [Record].
+         */
+        override fun indexOf(column: ColumnDef<*>): Int = this@Recordset.columns.indexOf(column)
 
         /**
          * Returns an unmodifiable [Map] of the data contained in this [StandaloneRecord].

@@ -1,5 +1,6 @@
 package org.vitrivr.cottontail.config
 
+import kotlin.math.max
 import kotlinx.serialization.Serializable
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
@@ -9,14 +10,16 @@ import java.util.concurrent.TimeUnit
  * Config for Cottontail DB's task execution engine.
  *
  * @author Ralph Gasser
- * @version 1.1.0
+ * @version 1.2.0
  */
 @Serializable
 data class ExecutionConfig(
     val coreThreads: Int = (Runtime.getRuntime().availableProcessors() / 2),
-    val maxThreads: Int = Runtime.getRuntime().availableProcessors(),
+    val maxThreads: Int = 25,
     val keepAliveMs: Long = 1000L,
-    val queueSize: Int = 100
+    val queueSize: Int = 100,
+    val transactionTableSize: Int = 100,
+    val transactionHistorySize: Int = 500
 ) {
 
     /**
@@ -25,8 +28,8 @@ data class ExecutionConfig(
      *  @return [ThreadPoolExecutor]
      */
     fun newExecutor() = ThreadPoolExecutor(
-        this.coreThreads,
-        this.maxThreads,
+        this.coreThreads.coerceAtLeast(1),
+        this.maxThreads.coerceAtLeast(max(4, this.coreThreads)),
         this.keepAliveMs,
         TimeUnit.MILLISECONDS,
         ArrayBlockingQueue(this.queueSize)

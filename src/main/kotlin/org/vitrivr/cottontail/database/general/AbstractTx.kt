@@ -5,12 +5,15 @@ import org.vitrivr.cottontail.database.index.IndexTx
 import org.vitrivr.cottontail.database.locking.LockMode
 import org.vitrivr.cottontail.execution.TransactionContext
 import org.vitrivr.cottontail.model.exceptions.TxException
+import java.util.concurrent.locks.ReentrantReadWriteLock
+import kotlin.concurrent.read
+import kotlin.concurrent.write
 
 /**
  * An abstract [Tx] implementation that provides some basic functionality.
  *
  * @author Ralph Gasser
- * @version 1.2.0
+ * @version 1.4.0
  */
 abstract class AbstractTx(override val context: TransactionContext) : Tx {
     /** Flag indicating whether or not this [IndexTx] was closed */
@@ -18,8 +21,14 @@ abstract class AbstractTx(override val context: TransactionContext) : Tx {
     final override var status: TxStatus = TxStatus.CLEAN
         protected set
 
-    /** The [TxSnapshot] that captures changes made through this [AbstractIndex] not visible to the surrounding [DBO]. */
-    protected abstract val snapshot: TxSnapshot
+    /**
+     * This is a [ReentrantReadWriteLock] that makes sure that only one thread at a time can access this [AbstractTx] instance.
+     *
+     * While access by different [TransactionContext]s is handled by the respective lock manager,
+     * it is still possible that different threads with the same [TransactionContext] try to access
+     * this [Tx]. This needs synchronisation.
+     */
+    val txLatch: ReentrantReadWriteLock = ReentrantReadWriteLock()
 
     /**
      * Commits all changes made through this [AbstractTx] and releases all locks obtained.
@@ -29,11 +38,16 @@ abstract class AbstractTx(override val context: TransactionContext) : Tx {
      * actual commit.
      */
     final override fun commit() {
-        if (this.status == TxStatus.DIRTY) {
-            this.snapshot.commit()
-            this.status = TxStatus.CLEAN
+        try {
+            if (this.status == TxStatus.DIRTY) {
+                this.snapshot.commit()
+            } else if (this.status == TxStatus.ERROR) {
+                throw IllegalArgumentException("Transaction ${this.context.txId} cannot be committed, because it is is an error state.")
+            }
+        } finally {
+            this.status = TxStatus.CLOSED
+            this.cleanup()
         }
-        this.context.releaseLock(this.dbo)
     }
 
     /**
@@ -44,22 +58,13 @@ abstract class AbstractTx(override val context: TransactionContext) : Tx {
      * commit.
      */
     final override fun rollback() {
-        if (this.status == TxStatus.DIRTY || this.status == TxStatus.ERROR) {
-            this.snapshot.rollback()
-            this.status = TxStatus.CLEAN
-        }
-        this.context.releaseLock(this.dbo)
-    }
-
-    /**
-     * Closes this [AbstractTx]. If there are uncommitted changes, these changes will be rolled back.
-     * Closed [AbstractTx] cannot be used anymore!
-     */
-    final override fun close() {
-        if (this.status != TxStatus.CLOSED) {
-            this.rollback()
-            this.cleanup()
+        try {
+            if (this.status == TxStatus.DIRTY || this.status == TxStatus.ERROR) {
+                this.snapshot.rollback()
+            }
+        } finally {
             this.status = TxStatus.CLOSED
+            this.cleanup()
         }
     }
 
@@ -79,13 +84,14 @@ abstract class AbstractTx(override val context: TransactionContext) : Tx {
     protected inline fun <T> withWriteLock(block: () -> (T)): T {
         if (this.status == TxStatus.CLOSED) throw TxException.TxClosedException(this.context.txId)
         if (this.status == TxStatus.ERROR) throw TxException.TxInErrorException(this.context.txId)
-        if (this.context.lockOn(this.dbo) !== LockMode.EXCLUSIVE) {
-            this.context.requestLock(this.dbo, LockMode.EXCLUSIVE)
-        }
+        this.context.requestLock(this.dbo, LockMode.EXCLUSIVE)
+
         if (this.status != TxStatus.DIRTY) {
             this.status = TxStatus.DIRTY
         }
-        return block()
+        return this.txLatch.write {
+            block()
+        }
     }
 
     /**
@@ -94,9 +100,9 @@ abstract class AbstractTx(override val context: TransactionContext) : Tx {
     protected inline fun <T> withReadLock(block: () -> (T)): T {
         if (this.status == TxStatus.CLOSED) throw TxException.TxClosedException(this.context.txId)
         if (this.status == TxStatus.ERROR) throw TxException.TxInErrorException(this.context.txId)
-        if (this.context.lockOn(this.dbo) === LockMode.NO_LOCK) {
-            this.context.requestLock(this.dbo, LockMode.SHARED)
+        this.context.requestLock(this.dbo, LockMode.SHARED)
+        return this.txLatch.read {
+            block()
         }
-        return block()
     }
 }

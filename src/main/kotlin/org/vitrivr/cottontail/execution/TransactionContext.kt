@@ -12,7 +12,7 @@ import org.vitrivr.cottontail.model.basics.TransactionId
  * A [TransactionContext] used by operators and their [Txn]s to execute and obtain necessary locks
  *
  * @author Ralph Gasser
- * @version 1.2.0
+ * @version 1.3.0
  */
 interface TransactionContext {
 
@@ -41,22 +41,6 @@ interface TransactionContext {
      * @param mode The desired [LockMode]
      */
     fun requestLock(dbo: DBO, mode: LockMode)
-
-    /**
-     * Releases a [Lock] on a [DBO]. This call is delegated to the [LockManager] and really just
-     * a convenient way for [Tx] objects to obtain locks.
-     *
-     * @param dbo [DBO] The [DBO] to release the lock for.
-     */
-    fun releaseLock(dbo: DBO)
-
-    /**
-     * Returns the [LockMode] this [TransactionContext] has on the given [DBO].
-     *
-     * @param dbo [DBO] The [DBO] to query the [LockMode] for.
-     * @return [LockMode]
-     */
-    fun lockOn(dbo: DBO): LockMode
 
     /**
      * Signals a [DataChangeEvent] to this [TransactionContext].

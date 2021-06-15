@@ -20,11 +20,24 @@ import java.lang.Math.floorDiv
  */
 open class ValueStatistics<T : Value>(val type: Type<T>) {
 
+    /** Flag indicating that this [ValueStatistics] needs updating. */
+    var fresh: Boolean = true
+        protected set
+
+    /** Number of null entries known to this [ValueStatistics]. */
+    var numberOfNullEntries: Long = 0L
+        protected set
+
+    /** Number of non-null entries known to this [ValueStatistics]. */
+    var numberOfNonNullEntries: Long = 0L
+        protected set
+
     companion object : Serializer<ValueStatistics<*>> {
         override fun serialize(out: DataOutput2, value: ValueStatistics<*>) {
             out.packInt(value.type.ordinal)
             out.packInt(value.type.logicalSize)
             when (value) {
+                is BooleanValueStatistics -> BooleanValueStatistics.serialize(out, value)
                 is ByteValueStatistics -> ByteValueStatistics.serialize(out, value)
                 is ShortValueStatistics -> ShortValueStatistics.serialize(out, value)
                 is IntValueStatistics -> IntValueStatistics.serialize(out, value)
@@ -39,13 +52,18 @@ open class ValueStatistics<T : Value>(val type: Type<T>) {
                 is LongVectorValueStatistics -> LongVectorValueStatistics.Serializer(value.type).serialize(out, value)
                 is IntVectorValueStatistics -> IntVectorValueStatistics.Serializer(value.type).serialize(out, value)
             }
-            out.writeBoolean(value.dirty)
+            out.writeBoolean(value.fresh)
             out.packLong(value.numberOfNullEntries)
             out.packLong(value.numberOfNonNullEntries)
         }
 
         override fun deserialize(input: DataInput2, available: Int): ValueStatistics<*> {
             val stat = when (val type = Type.forOrdinal(input.unpackInt(), input.unpackInt())) {
+                Type.Complex32,
+                Type.Complex64,
+                is Type.Complex32Vector,
+                is Type.Complex64Vector,
+                -> ValueStatistics(type)
                 Type.Boolean -> BooleanValueStatistics.deserialize(input, available)
                 Type.Byte -> ByteValueStatistics.deserialize(input, available)
                 Type.Double -> DoubleValueStatistics.deserialize(input, available)
@@ -55,34 +73,18 @@ open class ValueStatistics<T : Value>(val type: Type<T>) {
                 Type.Short -> ShortValueStatistics.deserialize(input, available)
                 Type.String -> StringValueStatistics.deserialize(input, available)
                 Type.Date -> DateValueStatistics.deserialize(input, available)
-                Type.Complex32 -> ValueStatistics(type)
-                Type.Complex64 -> ValueStatistics(type)
-                is Type.Complex32Vector -> ValueStatistics(type)
-                is Type.Complex64Vector -> ValueStatistics(type)
                 is Type.BooleanVector -> BooleanVectorValueStatistics.Serializer(type).deserialize(input, available)
                 is Type.DoubleVector -> DoubleVectorValueStatistics.Serializer(type).deserialize(input, available)
                 is Type.FloatVector -> FloatVectorValueStatistics.Serializer(type).deserialize(input, available)
                 is Type.IntVector -> IntVectorValueStatistics.Serializer(type).deserialize(input, available)
                 is Type.LongVector -> LongVectorValueStatistics.Serializer(type).deserialize(input, available)
             }
-            stat.dirty = input.readBoolean()
+            stat.fresh = input.readBoolean()
             stat.numberOfNullEntries = input.unpackLong()
             stat.numberOfNonNullEntries = input.unpackLong()
             return stat
         }
     }
-
-    /** Flag indicating that this [ValueStatistics] needs updating. */
-    var dirty: Boolean = false
-        protected set
-
-    /** Number of null entries known to this [ValueStatistics]. */
-    var numberOfNullEntries: Long = 0L
-        protected set
-
-    /** Number of non-null entries known to this [ValueStatistics]. */
-    var numberOfNonNullEntries: Long = 0L
-        protected set
 
     /** Total number of entries known to this [ValueStatistics]. */
     val numberOfEntries
@@ -137,6 +139,28 @@ open class ValueStatistics<T : Value>(val type: Type<T>) {
     open fun update(old: T?, new: T?) {
         this.delete(old)
         this.insert(new)
+    }
+
+    /**
+     * Resets this [ValueStatistics] and sets all its values to to the default value.
+     */
+    open fun reset() {
+        this.fresh = true
+        this.numberOfNullEntries = 0L
+        this.numberOfNonNullEntries = 0L
+    }
+
+    /**
+     * Copies this [ValueStatistics] and returns it.
+     *
+     * @return Copy of this [ValueStatistics].
+     */
+    open fun copy(): ValueStatistics<T> {
+        val copy = ValueStatistics(this.type)
+        copy.fresh = this.fresh
+        copy.numberOfNullEntries = this.numberOfNullEntries
+        copy.numberOfNonNullEntries = this.numberOfNonNullEntries
+        return copy
     }
 
     /**

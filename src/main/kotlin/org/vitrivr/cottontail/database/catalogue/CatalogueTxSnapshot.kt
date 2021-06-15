@@ -9,7 +9,7 @@ import org.vitrivr.cottontail.model.basics.Name
  * dropped during the [CatalogueTx]
  *
  * @author Ralph Gasser
- * @version 1.0.0
+ * @version 1.1.0
  */
 interface CatalogueTxSnapshot : TxSnapshot {
     /** A map of all [Schema] structures available to the enclosing [CatalogueTx]. */

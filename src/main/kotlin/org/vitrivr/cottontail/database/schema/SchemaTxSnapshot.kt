@@ -8,7 +8,7 @@ import org.vitrivr.cottontail.model.basics.Name
  * These is a [TxSnapshot] for [SchemaTx]. It tracks all [Entity] that have been created or dropped during the [SchemaTx]
  *
  * @author Ralph Gasser
- * @version 1.0.0
+ * @version 1.1.0
  */
 interface SchemaTxSnapshot : TxSnapshot {
     /** A map of all [Entity] structures available to the enclosing [SchemaTx]. */

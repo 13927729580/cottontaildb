@@ -3,34 +3,41 @@ package org.vitrivr.cottontail.database.entity
 import it.unimi.dsi.fastutil.objects.Object2ObjectArrayMap
 import it.unimi.dsi.fastutil.objects.Object2ObjectLinkedOpenHashMap
 import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap
-import org.mapdb.*
+import org.mapdb.DB
+import org.mapdb.DBException
+import org.mapdb.StoreWAL
+import org.vitrivr.cottontail.config.Config
 import org.vitrivr.cottontail.database.column.Column
 import org.vitrivr.cottontail.database.column.ColumnDef
+import org.vitrivr.cottontail.database.column.ColumnEngine
 import org.vitrivr.cottontail.database.column.ColumnTx
 import org.vitrivr.cottontail.database.events.DataChangeEvent
-import org.vitrivr.cottontail.database.general.AbstractTx
-import org.vitrivr.cottontail.database.general.DBOVersion
-import org.vitrivr.cottontail.database.general.TxSnapshot
-import org.vitrivr.cottontail.database.general.TxStatus
+import org.vitrivr.cottontail.database.general.*
 import org.vitrivr.cottontail.database.index.Index
 import org.vitrivr.cottontail.database.index.IndexTx
 import org.vitrivr.cottontail.database.index.IndexType
 import org.vitrivr.cottontail.database.locking.LockMode
 import org.vitrivr.cottontail.database.schema.DefaultSchema
-import org.vitrivr.cottontail.database.statistics.columns.*
+import org.vitrivr.cottontail.database.schema.Schema
+import org.vitrivr.cottontail.database.statistics.columns.ValueStatistics
 import org.vitrivr.cottontail.database.statistics.entity.EntityStatistics
 import org.vitrivr.cottontail.execution.TransactionContext
-import org.vitrivr.cottontail.model.basics.*
+import org.vitrivr.cottontail.model.basics.Name
+import org.vitrivr.cottontail.model.basics.Record
+import org.vitrivr.cottontail.model.basics.TupleId
 import org.vitrivr.cottontail.model.exceptions.DatabaseException
 import org.vitrivr.cottontail.model.exceptions.TxException
 import org.vitrivr.cottontail.model.recordset.StandaloneRecord
 import org.vitrivr.cottontail.model.values.types.Value
-import org.vitrivr.cottontail.utilities.io.FileUtilities
+import org.vitrivr.cottontail.utilities.extensions.write
+import org.vitrivr.cottontail.utilities.io.TxFileUtilities
 import java.io.IOException
+import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption
 import java.util.*
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.StampedLock
+import kotlin.math.min
 
 /**
  * Represents a single entity in the Cottontail DB data model. An [DefaultEntity] has name that must remain unique within a [DefaultSchema].
@@ -44,9 +51,9 @@ import java.util.concurrent.locks.StampedLock
  * @see EntityTx
  *
  * @author Ralph Gasser
- * @version 2.0.0
+ * @version 2.1.0
  */
-class DefaultEntity(override val path: Path, override val parent: DefaultSchema) : Entity {
+class DefaultEntity(override val path: Path, override val parent: Schema) : Entity {
     /**
      * Companion object of the [DefaultEntity]
      */
@@ -59,6 +66,50 @@ class DefaultEntity(override val path: Path, override val parent: DefaultSchema)
 
         /** Field name for the [DefaultEntity]'s statistics.  */
         const val ENTITY_STATISTICS_FIELD = "cdb_entity_statistics"
+
+        /**
+         * Initializes an empty [DefaultEntity] on disk.
+         *
+         * @param name The [Name.EntityName] of the [DefaultEntity]
+         * @param path The [Path] under which to create the [DefaultEntity]
+         * @param config The [Config] for to use for creation.
+         * @param columns The list of [ColumnDef] to [ColumnEngine] pairs.
+         */
+        fun initialize(name: Name.EntityName, path: Path, config: Config, columns: List<Pair<ColumnDef<*>, ColumnEngine>>): Path {
+            /* Prepare empty catalogue. */
+            val dataPath = TxFileUtilities.createPath(path.resolve("entity_${name.simple}"))
+            if (Files.exists(dataPath)) throw DatabaseException.InvalidFileException("Failed to create entity '$name'. Data directory '$dataPath' seems to be occupied.")
+            Files.createDirectories(dataPath)
+
+            /* Prepare column references and column statistics. */
+            try {
+                val entityHeader = EntityHeader(name = name.simple, columns = columns.map {
+                    val colPath = dataPath.resolve("${it.first.name.simple}.col")
+                    it.second.create(colPath, it.first, config)
+                    EntityHeader.ColumnRef(it.first.name.simple, it.second)
+                })
+                val entityStatistics = EntityStatistics()
+                columns.forEach { entityStatistics[it.first] = it.first.type.statistics() as ValueStatistics<Value> }
+
+                /* Write entity header + statistics entry to disk. */
+                config.mapdb.db(dataPath.resolve(CATALOGUE_FILE)).use {
+                    it.atomicVar(ENTITY_HEADER_FIELD, EntityHeader.Serializer).create().set(entityHeader)
+                    it.atomicVar(ENTITY_STATISTICS_FIELD, EntityStatistics.Serializer).create().set(entityStatistics)
+                    it.commit()
+                }
+            } catch (e: DBException) {
+                TxFileUtilities.delete(dataPath) /* Cleanup. */
+                throw DatabaseException("Failed to create entity '$name' due to error in the underlying data store: {${e.message}")
+            } catch (e: IOException) {
+                TxFileUtilities.delete(dataPath) /* Cleanup. */
+                throw DatabaseException("Failed to create entity '$name' due to an IO exception: {${e.message}")
+            } catch (e: Throwable) {
+                TxFileUtilities.delete(dataPath) /* Cleanup. */
+                throw DatabaseException("Failed to create entity '$name' due to an unexpected error: {${e.message}")
+            }
+
+            return dataPath
+        }
     }
 
     /** Internal reference to the [StoreWAL] underpinning this [DefaultEntity]. */
@@ -90,13 +141,13 @@ class DefaultEntity(override val path: Path, override val parent: DefaultSchema)
     override val version: DBOVersion
         get() = DBOVersion.V2_0
 
-    /** Number of [Column]s in this [DefaultEntity]. */
-    override val numberOfColumns: Int
-        get() = this.columns.size
-
     /** The [EntityStatistics] in this [DefaultEntity]. This is a snapshot and may change immediately. */
     override val statistics: EntityStatistics
         get() = this.statisticsField.get()
+
+    /** Number of [Column]s in this [DefaultEntity]. */
+    override val numberOfColumns: Int
+        get() = this.columns.size
 
     /** Number of entries in this [DefaultEntity]. This is a snapshot and may change immediately. */
     override val numberOfRows: Long
@@ -107,9 +158,8 @@ class DefaultEntity(override val path: Path, override val parent: DefaultSchema)
         get() = this.statistics.maximumTupleId
 
     /** Status indicating whether this [DefaultEntity] is open or closed. */
-    @Volatile
-    override var closed: Boolean = false
-        private set
+    override val closed: Boolean
+        get() = this.store.isClosed()
 
     init {
         /** Load and initialize the columns. */
@@ -125,11 +175,6 @@ class DefaultEntity(override val path: Path, override val parent: DefaultSchema)
             val indexName = this.name.index(it.name)
             val path = this.path.resolve("${it.name}.idx")
             indexes[indexName] = it.type.open(path, this)
-        }
-
-        /** Create entity statistics object, if none exists. */
-        if (this.statisticsField.get() == null) {
-            this.statisticsField.set(this.newStatistics())
         }
     }
 
@@ -148,33 +193,12 @@ class DefaultEntity(override val path: Path, override val parent: DefaultSchema)
      * as all involved [Column]s are involved.Therefore, access to the method is mediated by an
      * global [DefaultEntity] wide lock.
      */
-    override fun close() {
+    override fun close() = this.closeLock.write {
         if (!this.closed) {
-            try {
-                val stamp = this.closeLock.tryWriteLock(1000, TimeUnit.MILLISECONDS)
-                try {
-                    this.columns.values.forEach { it.close() }
-                    this.store.close()
-                    this.closed = true
-                } catch (e: Throwable) {
-                    this.closeLock.unlockWrite(stamp)
-                    throw e
-                }
-            } catch (e: InterruptedException) {
-                throw IllegalStateException("Could not close entity ${this.name}. Failed to acquire exclusive lock which indicates, that transaction wasn't closed properly.")
-            }
+            this.store.close()
+            this.columns.values.forEach { it.close() }
+            this.indexes.values.forEach { it.close() }
         }
-    }
-
-    /**
-     * Creates a new, empty [EntityStatistics] object for this [DefaultEntity].
-     *
-     * @return [EntityStatistics] object for this [DefaultEntity].
-     */
-    private fun newStatistics(): EntityStatistics {
-        val statistics = EntityStatistics()
-        this.columns.values.forEach { statistics[it.columnDef] = it.type.statistics() as ValueStatistics<Value> }
-        return statistics
     }
 
     /**
@@ -193,73 +217,75 @@ class DefaultEntity(override val path: Path, override val parent: DefaultSchema)
         override val dbo: DefaultEntity
             get() = this@DefaultEntity
 
-        /** [TxSnapshot] of this [EntityTx] */
-        override val snapshot = object : EntityTxSnapshot {
+        /**
+         * [TxSnapshot] of this [EntityTx]
+         *
+         * Important: The [EntityTxSnapshot] is created lazily upon first access, which means that whatever
+         * caller creates it, it holds the necessary locks!
+         */
+        override val snapshot by lazy {
+            object : EntityTxSnapshot {
+                /** Local snapshot of the surrounding [Entity]'s [EntityStatistics]. */
+                override val statistics: EntityStatistics = this@DefaultEntity.statisticsField.get()
 
-            /** Local snapshot of the surrounding [Entity]'s [EntityStatistics]. */
-            override val statistics: EntityStatistics = this@DefaultEntity.statisticsField.get()
+                /** Local snapshot of the surrounding [Entity]'s [Index]es. */
+                override val indexes = Object2ObjectOpenHashMap(this@DefaultEntity.indexes)
 
-            /** Local snapshot of the surrounding [Entity]'s [Index]es. */
-            override val indexes = Object2ObjectOpenHashMap(this@DefaultEntity.indexes)
+                /** A map of all [TxAction] executed by this [EntityTx]. Can be seen as an in-memory WAL. */
+                override val actions = LinkedList<TxAction>()
 
-            /**
-             * Commits the [EntityTx] and integrates all changes made through it into the [DefaultEntity].
-             */
-            override fun commit() {
-                try {
-                    /* Update update header and commit changes. */
-                    val oldHeader = this@DefaultEntity.headerField.get()
-                    val newHeader = oldHeader.copy(modified = System.currentTimeMillis(), indexes = this.indexes.values.map { EntityHeader.IndexRef(it.name.simple, it.type) })
-
-                    /* Write header + statistics and commit. */
-                    this@DefaultEntity.headerField.compareAndSet(oldHeader, newHeader)
-                    this@DefaultEntity.statisticsField.set(this.statistics)
-                    this@DefaultEntity.store.commit()
-                } catch (e: DBException) {
-                    this@Tx.status = TxStatus.ERROR
-                    throw DatabaseException("Failed to create index '$name' due to a storage exception: ${e.message}")
-                }
-
-                /* Materialize created indexes. */
-                this.indexes.forEach {
-                    if (!this@DefaultEntity.indexes.contains(it.key)) {
-                        this@DefaultEntity.indexes[it.key] = it.value
-                    }
-                }
-
-                /* Materialize dropped indexes. */
-                val remove = this@DefaultEntity.indexes.values.filter {
-                    !this.indexes.containsKey(it.name)
-                }
-                remove.forEach {
+                /**
+                 * Commits the [EntityTx] and integrates all changes made through it into the [DefaultEntity].
+                 */
+                override fun commit() {
                     try {
-                        it.close()
-                        FileUtilities.deleteRecursively(it.path)
-                    } finally {
-                        this@DefaultEntity.indexes.remove(it.name)
-                    }
-                }
-            }
+                        /* Materialize changes in surrounding schema (in-memory). */
+                        this.actions.forEach { it.commit() }
 
-            /**
-             * Rolls back the [EntityTx] and integrates all changes made through it into the [DefaultEntity].
-             */
-            override fun rollback() {
-                /* Delete newly created indexes. */
-                this.indexes.forEach {
-                    if (!this@DefaultEntity.indexes.contains(it.key)) {
-                        it.value.close()
-                        FileUtilities.deleteRecursively(it.value.path)
+                        /* Update update header and commit changes. */
+                        val oldHeader = this@DefaultEntity.headerField.get()
+                        val newHeader = oldHeader.copy(modified = System.currentTimeMillis(), indexes = this.indexes.values.map { EntityHeader.IndexRef(it.name.simple, it.type) })
+
+                        /* Write header + statistics and commit. */
+                        this@DefaultEntity.headerField.compareAndSet(oldHeader, newHeader)
+                        this@DefaultEntity.statisticsField.set(this.statistics)
+                        this@DefaultEntity.store.commit()
+                    } catch (e: Throwable) {
+                        this@Tx.status = TxStatus.ERROR
+                        throw DatabaseException("Failed to create index '$name' due to a storage exception: ${e.message}")
                     }
                 }
-                this@DefaultEntity.store.rollback()
+
+                /**
+                 * Rolls back the [EntityTx] and reverts all changes.
+                 */
+                override fun rollback() {
+                    this.actions.forEach { it.rollback() }
+                    this@DefaultEntity.store.rollback()
+                }
+
+                /**
+                 * Records a [TxAction] with this [EntityTxSnapshot].
+                 *
+                 * @param action The [TxAction] to record.
+                 * @return True on success, false otherwise.
+                 */
+                override fun record(action: TxAction): Boolean = when (action) {
+                    is CreateIndexTxAction,
+                    is DropIndexTxAction -> {
+                        this.actions.add(action)
+                        true
+                    }
+                    else -> false
+                }
             }
         }
 
-        /** Tries to acquire a global read-lock on this entity. */
+        /** Checks if DBO is still open. */
         init {
             if (this@DefaultEntity.closed) {
-                throw TxException.TxDBOClosedException(this.context.txId)
+                this@DefaultEntity.closeLock.unlockRead(this.closeStamp)
+                throw TxException.TxDBOClosedException(this.context.txId, this@DefaultEntity)
             }
         }
 
@@ -272,11 +298,10 @@ class DefaultEntity(override val path: Path, override val parent: DefaultSchema)
          *
          * @throws DatabaseException If tuple with the desired ID doesn't exist OR is invalid.
          */
-        override fun read(tupleId: TupleId, columns: Array<ColumnDef<*>>): Record {
+        override fun read(tupleId: TupleId, columns: Array<ColumnDef<*>>): Record = this.withReadLock {
             /* Read values from underlying columns. */
             val values = columns.map {
-                val column = this@DefaultEntity.columns[it.name]
-                    ?: throw IllegalArgumentException("Column $it does not exist on entity ${this@DefaultEntity.name}.")
+                val column = this@DefaultEntity.columns[it.name] ?: throw IllegalArgumentException("Column $it does not exist on entity ${this@DefaultEntity.name}.")
                 (this.context.getTx(column) as ColumnTx<*>).read(tupleId)
             }.toTypedArray()
 
@@ -357,10 +382,19 @@ class DefaultEntity(override val path: Path, override val parent: DefaultSchema)
             }
 
             /* Creates and opens the index and adds it to snapshot. */
-            val data = this@DefaultEntity.path.resolve("${name.simple}.idx")
-            val newIndex = type.create(data, this.dbo, name, columns, params)
-            this.snapshot.indexes[newIndex.name] = newIndex
-            return newIndex
+            try {
+                val data = this@DefaultEntity.path.resolve("${name.simple}.idx")
+                val index = type.create(data, this.dbo, name, columns, params)
+
+                /* Update snapshot. */
+                this.snapshot.indexes[name] = index
+                this.snapshot.record(CreateIndexTxAction(index))
+
+                return index
+            } catch (e: DatabaseException) {
+                this.status = TxStatus.ERROR
+                throw e
+            }
         }
 
         /**
@@ -371,21 +405,12 @@ class DefaultEntity(override val path: Path, override val parent: DefaultSchema)
         override fun dropIndex(name: Name.IndexName) = this.withWriteLock {
             /* Obtain index and acquire exclusive lock on it. */
             val index = this.snapshot.indexes.remove(name) ?: throw DatabaseException.IndexDoesNotExistException(name)
-            if (this.context.lockOn(index) == LockMode.NO_LOCK) {
-                this.context.requestLock(index, LockMode.EXCLUSIVE)
-            }
+            this.context.requestLock(index, LockMode.EXCLUSIVE)
 
-            try {
-                /* Update header. */
-                val oldHeader = this@DefaultEntity.headerField.get()
-                this@DefaultEntity.headerField.set(oldHeader.copy(indexes = oldHeader.indexes.filter { it.name != index.name.simple }))
-            } catch (e: DBException) {
-                this.status = TxStatus.ERROR
-                throw DatabaseException("Failed to drop index '$name' due to a storage exception: ${e.message}")
-            } catch (e: IOException) {
-                this.status = TxStatus.ERROR
-                throw DatabaseException("Failed to drop index '$name' due to an IO exception: ${e.message}")
-            }
+            /* Remove entity from local snapshot. */
+            this.snapshot.indexes.remove(name)
+            this.snapshot.record(DropIndexTxAction(name))
+            Unit
         }
 
         /**
@@ -393,27 +418,30 @@ class DefaultEntity(override val path: Path, override val parent: DefaultSchema)
          */
         override fun optimize() = this.withWriteLock {
             /* Stage 1a: Rebuild incremental indexes and statistics. */
-            val incremental = this.listIndexes().filter { it.supportsIncrementalUpdate }.map {
+            val incremental = this.snapshot.indexes.values.filter {
+                it.supportsIncrementalUpdate
+            }.map {
                 val tx = this.context.getTx(it) as IndexTx
                 tx.clear() /* Important: Clear indexes. */
                 tx
             }
-            val columns = this.listColumns().map { it.columnDef }.toTypedArray()
+            val columns = this@DefaultEntity.columns.values.map { it.columnDef }.toTypedArray()
             val map = Object2ObjectOpenHashMap<ColumnDef<*>, Value>(columns.size)
-            val statistics = this@DefaultEntity.newStatistics()
-            this.scan(columns).forEach { r ->
+            val iterator = this.scan(columns)
+            this.snapshot.statistics.reset()
+            iterator.forEach { r ->
                 r.forEach { columnDef, value -> map[columnDef] = value }
                 val event = DataChangeEvent.InsertDataChangeEvent(this@DefaultEntity, r.tupleId, map) /* Fake data change event for update. */
-                statistics.consume(event)
+                this.snapshot.statistics.consume(event)
                 incremental.forEach { it.update(event) }
             }
 
-            /* Stage 1b: Combines statistics. */
-            this.snapshot.statistics.clear()
-            this.snapshot.statistics.combine(statistics)
-
             /* Stage 2: Rebuild remaining indexes. */
-            this.listIndexes().filter { !it.supportsIncrementalUpdate }.forEach { (this.context.getTx(it) as IndexTx).rebuild() }
+            this.snapshot.indexes.values.filter {
+                !it.supportsIncrementalUpdate
+            }.forEach {
+                (this.context.getTx(it) as IndexTx).rebuild()
+            }
         }
 
         /**
@@ -426,44 +454,60 @@ class DefaultEntity(override val path: Path, override val parent: DefaultSchema)
          *
          * @return [Iterator]
          */
-        override fun scan(columns: Array<ColumnDef<*>>): Iterator<Record> = scan(columns, 1L..this.maxTupleId())
+        override fun scan(columns: Array<ColumnDef<*>>): Iterator<Record> = scan(columns, 0, 1)
 
         /**
          * Creates and returns a new [Iterator] for this [DefaultEntity.Tx] that returns all [TupleId]s
          * contained within the surrounding [DefaultEntity] and a certain range.
          *
          * @param columns The [ColumnDef]s that should be scanned.
-         * @param range The [LongRange] that should be scanned.
+         * @param partitionIndex The [partitionIndex] for this [scan] call.
+         * @param partitions The total number of partitions for this [scan] call.
          *
          * @return [Iterator]
          */
-        override fun scan(columns: Array<ColumnDef<*>>, range: LongRange) = object : Iterator<Record> {
+        override fun scan(columns: Array<ColumnDef<*>>, partitionIndex: Int, partitions: Int) = this@Tx.withReadLock {
+            object : Iterator<Record> {
 
-            /** The wrapped [Iterator] of the first (primary) column. */
-            private val wrapped = this@Tx.withReadLock {
-                (this@Tx.context.getTx(this@DefaultEntity.columns.values.first()) as ColumnTx<*>).scan(range)
+                /** The [LongRange] to iterate over. */
+                private val range: LongRange
+
+                init {
+                    val maximum: Long = this@Tx.maxTupleId()
+                    val partitionSize: Long = Math.floorDiv(maximum, partitions.toLong()) + 1L
+                    val start: Long = partitionIndex * partitionSize
+                    val end = min(((partitionIndex + 1) * partitionSize), maximum)
+                    this.range = start..end
+                }
+
+                /** List of [ColumnTx]s used by  this [Iterator]. */
+                private val txs = columns.map {
+                    val column = this@DefaultEntity.columns[it.name] ?: throw IllegalArgumentException("Column $it does not exist on entity ${this@DefaultEntity.name}.")
+                    (this@Tx.context.getTx(column) as ColumnTx<*>)
+                }
+
+                /** The wrapped [Iterator] of the first column. */
+                private val wrapped = this.txs.first().scan(this.range)
+
+                /** Array of [Value]s emitted by this [DefaultEntity]. */
+                private val values = arrayOfNulls<Value?>(columns.size)
+
+                /**
+                 * Returns the next element in the iteration.
+                 */
+                override fun next(): Record {
+                    val tupleId = this.wrapped.next()
+                    for ((i, tx) in this.txs.withIndex()) {
+                        this.values[i] = tx.read(tupleId)
+                    }
+                    return StandaloneRecord(tupleId, columns, this.values)
+                }
+
+                /**
+                 * Returns `true` if the iteration has more elements.
+                 */
+                override fun hasNext(): Boolean = this.wrapped.hasNext()
             }
-
-            /**
-             * Returns the next element in the iteration.
-             */
-            override fun next(): Record {
-                /* Read values from underlying columns. */
-                val tupleId = this.wrapped.next()
-                val values = columns.map {
-                    val column = this@DefaultEntity.columns[it.name]
-                        ?: throw IllegalArgumentException("Column $it does not exist on entity ${this@DefaultEntity.name}.")
-                    (this@Tx.context.getTx(column) as ColumnTx<*>).read(tupleId)
-                }.toTypedArray()
-
-                /* Return value of all the desired columns. */
-                return StandaloneRecord(tupleId, columns, values)
-            }
-
-            /**
-             * Returns `true` if the iteration has more elements.
-             */
-            override fun hasNext(): Boolean = this.wrapped.hasNext()
         }
 
         /**
@@ -479,6 +523,8 @@ class DefaultEntity(override val path: Path, override val parent: DefaultSchema)
             try {
                 var lastTupleId: TupleId? = null
                 val inserts = Object2ObjectArrayMap<ColumnDef<*>, Value>(this@DefaultEntity.columns.size)
+
+                /* This is a critical section and requires a latch. */
                 this@DefaultEntity.columns.values.forEach {
                     val tx = this.context.getTx(it) as ColumnTx<Value>
                     val value = record[it.columnDef]
@@ -491,12 +537,10 @@ class DefaultEntity(override val path: Path, override val parent: DefaultSchema)
                 }
 
                 /* Issue DataChangeEvent.InsertDataChange event and update indexes + statistics. */
-                if (lastTupleId != null) {
-                    val event = DataChangeEvent.InsertDataChangeEvent(this@DefaultEntity, lastTupleId!!, inserts)
-                    this.snapshot.indexes.values.forEach { (this.context.getTx(it) as IndexTx).update(event) }
-                    this.snapshot.statistics.consume(event)
-                    this.context.signalEvent(event)
-                }
+                val event = DataChangeEvent.InsertDataChangeEvent(this@DefaultEntity, lastTupleId!!, inserts)
+                this.snapshot.indexes.values.forEach { (this.context.getTx(it) as IndexTx).update(event) }
+                this.snapshot.statistics.consume(event)
+                this.context.signalEvent(event)
 
                 return lastTupleId
             } catch (e: DatabaseException) {
@@ -531,7 +575,6 @@ class DefaultEntity(override val path: Path, override val parent: DefaultSchema)
                 this.snapshot.indexes.values.forEach { (this.context.getTx(it) as IndexTx).update(event) }
                 this.snapshot.statistics.consume(event)
                 this.context.signalEvent(event)
-
             } catch (e: DatabaseException) {
                 this.status = TxStatus.ERROR
                 throw e
@@ -572,6 +615,41 @@ class DefaultEntity(override val path: Path, override val parent: DefaultSchema)
          */
         override fun cleanup() {
             this@DefaultEntity.closeLock.unlockRead(this.closeStamp)
+        }
+
+        /**
+         * A [TxAction] for creating a new [Index].
+         *
+         * @param index [Index] that has been created.
+         */
+        inner class CreateIndexTxAction(private val index: Index) : TxAction {
+            override fun commit() {
+                this.index.close()
+                val move = Files.move(this.index.path, TxFileUtilities.plainPath(this.index.path), StandardCopyOption.ATOMIC_MOVE)
+                this@DefaultEntity.indexes[this.index.name] = this.index.type.open(move, this@DefaultEntity)
+            }
+
+            override fun rollback() {
+                this.index.close()
+                TxFileUtilities.delete(this.index.path)
+            }
+        }
+
+        /**
+         * A [TxAction] implementation for dropping an [Index].
+         *
+         * @param index [Index] that has been dropped.
+         */
+        inner class DropIndexTxAction(private val index: Name.IndexName) : TxAction {
+            override fun commit() {
+                val index = this@DefaultEntity.indexes.remove(this.index) ?: throw IllegalStateException("Failed to drop index $index because it is unknown to the enclosing entity. This is a programmer's error!")
+                index.close()
+                if (Files.exists(index.path)) {
+                    TxFileUtilities.delete(index.path)
+                }
+            }
+
+            override fun rollback() {}
         }
     }
 }

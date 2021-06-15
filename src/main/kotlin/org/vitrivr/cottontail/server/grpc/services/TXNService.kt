@@ -2,87 +2,81 @@ package org.vitrivr.cottontail.server.grpc.services
 
 import com.google.protobuf.Empty
 import io.grpc.Status
-import io.grpc.stub.StreamObserver
-import org.slf4j.LoggerFactory
+import kotlinx.coroutines.flow.Flow
 import org.vitrivr.cottontail.execution.TransactionManager
 import org.vitrivr.cottontail.execution.TransactionType
-import org.vitrivr.cottontail.execution.operators.sinks.SpoolerSinkOperator
 import org.vitrivr.cottontail.execution.operators.system.ListLocksOperator
 import org.vitrivr.cottontail.execution.operators.system.ListTransactionsOperator
 import org.vitrivr.cottontail.grpc.CottontailGrpc
 import org.vitrivr.cottontail.grpc.TXNGrpc
-import org.vitrivr.cottontail.model.exceptions.TransactionException
+import org.vitrivr.cottontail.grpc.TXNGrpcKt
 import java.util.*
+import kotlin.time.ExperimentalTime
 
 /**
- * Implementation of [TXNGrpc.TXNImplBase], the gRPC endpoint for managing [TransactionManager.Transaction]s
- * in Cottontail DB
+ * Implementation of [TXNGrpc.TXNImplBase], the gRPC endpoint for managing [TransactionManager.Transaction]s in Cottontail DB
  *
  * @author Ralph Gasser
- * @version 1.0.1
+ * @version 2.0.0
  */
-class TXNService(override val manager: TransactionManager) : TXNGrpc.TXNImplBase(), TransactionService {
-
-    /** Logger used for logging the output. */
-    companion object {
-        private val LOGGER = LoggerFactory.getLogger(TXNService::class.java)
-    }
+@ExperimentalTime
+class TXNService constructor(override val manager: TransactionManager) : TXNGrpcKt.TXNCoroutineImplBase(), gRPCTransactionService {
 
     /**
      * gRPC endpoint for beginning an new [TransactionManager.Transaction].
      */
-    override fun begin(request: Empty, responseObserver: StreamObserver<CottontailGrpc.TransactionId>) {
+    override suspend fun begin(request: Empty): CottontailGrpc.TransactionId {
         val txn = this.manager.Transaction(TransactionType.USER)
-        val txId = CottontailGrpc.TransactionId.newBuilder().setValue(txn.txId).build()
-        responseObserver.onNext(txId)
-        responseObserver.onCompleted()
+        return CottontailGrpc.TransactionId.newBuilder().setValue(txn.txId).build()
     }
 
     /**
      * gRPC for committing a [TransactionManager.Transaction].
      */
-    override fun commit(request: CottontailGrpc.TransactionId, responseObserver: StreamObserver<Empty>) = try {
-        this.withTransactionContext(request) { tx, _ ->
-            tx.commit()
-            responseObserver.onNext(Empty.getDefaultInstance())
-            responseObserver.onCompleted()
+    override suspend fun commit(request: CottontailGrpc.TransactionId): Empty {
+        val txn = this.manager[request.value] /* Reuse existing transaction. */
+        if (txn === null || txn.type !== TransactionType.USER) {
+            val message = "COMMIT failed because USER transaction ${request.value} could not be obtained."
+            throw Status.FAILED_PRECONDITION.withDescription(message).asException()
         }
-    } catch (e: TransactionException.TransactionNotFoundException) {
-        val message = "Execution failed because transaction ${request.value} could not be resumed."
-        LOGGER.info(message)
-        responseObserver.onError(Status.FAILED_PRECONDITION.withDescription(message).asException())
+        val queryId = request.queryId.ifEmpty { UUID.randomUUID().toString() }
+        try {
+            txn.commit()
+            return Empty.getDefaultInstance()
+        } catch (e: Throwable) {
+            throw Status.INTERNAL.withDescription(formatMessage(txn, queryId, "Failed to execute COMMIT due to unexpected error: ${e.message}")).asException()
+        }
     }
 
     /**
      * gRPC for rolling back a [TransactionManager.Transaction].
      */
-    override fun rollback(request: CottontailGrpc.TransactionId, responseObserver: StreamObserver<Empty>) = try {
-        this.withTransactionContext(request) { tx, _ ->
-            tx.rollback()
-            responseObserver.onNext(Empty.getDefaultInstance())
-            responseObserver.onCompleted()
+    override suspend fun rollback(request: CottontailGrpc.TransactionId): Empty {
+        val txn = this.manager[request.value]
+        if (txn === null || txn.type !== TransactionType.USER) {
+            val message = "ROLLBACK failed because USER transaction ${request.value} could not be obtained."
+            throw Status.FAILED_PRECONDITION.withDescription(message).asException()
         }
-    } catch (e: TransactionException.TransactionNotFoundException) {
-        val message = "Execution failed because transaction ${request.value} could not be resumed."
-        LOGGER.info(message)
-        responseObserver.onError(Status.FAILED_PRECONDITION.withDescription(message).asException())
+        val queryId = request.queryId.ifEmpty { UUID.randomUUID().toString() }
+        try {
+            txn.rollback()
+            return Empty.getDefaultInstance()
+        } catch (e: Throwable) {
+            throw Status.INTERNAL.withDescription(formatMessage(txn, queryId, "Failed to execute COMMIT due to unexpected error: ${e.message}")).asException()
+        }
     }
 
     /**
      * gRPC for listing all [TransactionManager.Transaction]s.
      */
-    override fun listTransactions(request: Empty, responseObserver: StreamObserver<CottontailGrpc.QueryResponseMessage>) = this.withTransactionContext function@{ tx, q ->
-        val operator = SpoolerSinkOperator(ListTransactionsOperator(this.manager), q, 0, responseObserver)
-        tx.execute(operator)
-        responseObserver.onCompleted()
+    override fun listTransactions(request: Empty): Flow<CottontailGrpc.QueryResponseMessage> = this.withTransactionContext(description = "LIST TRANSACTIONS") { tx, q ->
+        executeAndMaterialize(tx, ListTransactionsOperator(this.manager), q, 0)
     }
 
     /**
-     * gRPC for listing all [TransactionManager.Transaction]s.
+     * gRPC for listing all active locks.
      */
-    override fun listLocks(request: Empty, responseObserver: StreamObserver<CottontailGrpc.QueryResponseMessage>) = this.withTransactionContext function@{ tx, q ->
-        val operator = SpoolerSinkOperator(ListLocksOperator(this.manager.lockManager), q, 0, responseObserver)
-        tx.execute(operator)
-        responseObserver.onCompleted()
+    override fun listLocks(request: Empty): Flow<CottontailGrpc.QueryResponseMessage> = this.withTransactionContext(description = "LIST LOCKS") { tx, q ->
+        executeAndMaterialize(tx, ListLocksOperator(this.manager.lockManager), q, 0)
     }
 }

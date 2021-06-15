@@ -1,9 +1,7 @@
 package org.vitrivr.cottontail.server.grpc.services
 
 import com.google.protobuf.Empty
-import io.grpc.Status
-import io.grpc.stub.StreamObserver
-import org.slf4j.LoggerFactory
+import kotlinx.coroutines.flow.Flow
 import org.vitrivr.cottontail.database.catalogue.Catalogue
 import org.vitrivr.cottontail.database.queries.QueryContext
 import org.vitrivr.cottontail.database.queries.binding.GrpcQueryBinder
@@ -14,43 +12,33 @@ import org.vitrivr.cottontail.database.queries.planning.rules.physical.index.Knn
 import org.vitrivr.cottontail.database.queries.planning.rules.physical.merge.LimitingSortMergeRule
 import org.vitrivr.cottontail.database.queries.planning.rules.physical.pushdown.CountPushdownRule
 import org.vitrivr.cottontail.execution.TransactionManager
-import org.vitrivr.cottontail.execution.operators.sinks.SpoolerSinkOperator
 import org.vitrivr.cottontail.execution.operators.system.ExplainQueryOperator
 import org.vitrivr.cottontail.grpc.CottontailGrpc
 import org.vitrivr.cottontail.grpc.DQLGrpc
-import org.vitrivr.cottontail.model.exceptions.ExecutionException
-import org.vitrivr.cottontail.model.exceptions.QueryException
-import org.vitrivr.cottontail.model.exceptions.TransactionException
-import java.util.*
+import org.vitrivr.cottontail.grpc.DQLGrpcKt
 import kotlin.time.ExperimentalTime
-import kotlin.time.measureTime
-import kotlin.time.measureTimedValue
 
 /**
  * Implementation of [DQLGrpc.DQLImplBase], the gRPC endpoint for querying data in Cottontail DB.
  *
  * @author Ralph Gasser
- * @version 1.5.0
+ * @version 2.0.0
  */
 @ExperimentalTime
-class DQLService(val catalogue: Catalogue, override val manager: TransactionManager) : DQLGrpc.DQLImplBase(), TransactionService {
+class DQLService(val catalogue: Catalogue, override val manager: TransactionManager) : DQLGrpcKt.DQLCoroutineImplBase(), gRPCTransactionService {
 
-    /** Logger used for logging the output. */
-    companion object {
-        private val LOGGER = LoggerFactory.getLogger(DQLService::class.java)
-    }
-
-    /** [GrpcQueryBinder] used to generate [org.vitrivr.cottontail.database.queries.planning.OperatorNode.Logical] tree from a gRPC query. */
+    /** [GrpcQueryBinder] used to generate a logical query plan. */
     private val binder = GrpcQueryBinder(catalogue = this@DQLService.catalogue)
 
-    /** [CottontailQueryPlanner] used to generate execution plans from query definitions. */
+    /** [CottontailQueryPlanner] used to generate execution plans from a logical query plan. */
     private val planner = CottontailQueryPlanner(
         logicalRules = listOf(
             LeftConjunctionRewriteRule,
             RightConjunctionRewriteRule,
             LeftConjunctionOnSubselectRewriteRule,
             RightConjunctionOnSubselectRewriteRule,
-            DeferredFetchRewriteRule
+            DeferFetchOnScanRewriteRule,
+            DeferFetchOnFetchRewriteRule
         ),
         physicalRules = listOf(BooleanIndexScanRule, KnnIndexScanRule, CountPushdownRule, LimitingSortMergeRule),
         this.catalogue.config.cache.planCacheSize
@@ -59,130 +47,40 @@ class DQLService(val catalogue: Catalogue, override val manager: TransactionMana
     /**
      * gRPC endpoint for executing queries.
      */
-    override fun query(request: CottontailGrpc.QueryMessage, responseObserver: StreamObserver<CottontailGrpc.QueryResponseMessage>) = try {
-        this.withTransactionContext(request.txId) { tx, q ->
-            try {
-                /* Start query execution. */
-                val ctx = QueryContext(tx)
-                val totalDuration = measureTime {
-                    /* Bind query and create logical plan. */
-                    val bindTime = measureTime {
-                        this.binder.bind(request.query, ctx)
-                    }
+    override fun query(request: CottontailGrpc.QueryMessage): Flow<CottontailGrpc.QueryResponseMessage> = this.withTransactionContext(request.txId, "EXECUTE QUERY") { tx, q ->
+        /* Start query execution. */
+        val ctx = QueryContext(tx)
 
-                    LOGGER.debug(formatMessage(tx, q, "Parsing & binding query took $bindTime."))
+        /* Bind query and create logical plan. */
+        this.binder.bind(request.query, ctx)
 
-                    /* Plan query and create execution plan. */
-                    val planTime = measureTime {
-                        this.planner.planAndSelect(ctx)
-                    }
-                    LOGGER.debug(formatMessage(tx, q, "Planning query took $planTime."))
+        /* Plan query and create execution plan. */
+        this.planner.planAndSelect(ctx)
 
-                    /* Execute query in transaction context. */
-                    tx.execute(SpoolerSinkOperator(ctx.toOperatorTree(tx), q, 0, responseObserver))
-                }
-
-                /* Finalize transaction. */
-                LOGGER.info(formatMessage(tx, q, "Executing query took ${totalDuration}."))
-                responseObserver.onCompleted()
-            } catch (e: QueryException.QuerySyntaxException) {
-                val message = formatMessage(tx, q, "Could not execute query due to syntax error: ${e.message}")
-                LOGGER.info(message)
-                responseObserver.onError(Status.INVALID_ARGUMENT.withDescription(message).asException())
-            } catch (e: QueryException.QueryBindException) {
-                val message = formatMessage(tx, q, "Could not execute query because DBO could not be found: ${e.message}")
-                LOGGER.info(message)
-                responseObserver.onError(Status.INVALID_ARGUMENT.withDescription(message).asException())
-            } catch (e: QueryException.QueryPlannerException) {
-                val message = formatMessage(tx, q, "Could not execute query because of an error during query planning: ${e.message}")
-                LOGGER.info(message)
-                responseObserver.onError(Status.INTERNAL.withDescription(message).asException())
-            } catch (e: TransactionException.DeadlockException) {
-                val message = formatMessage(tx, q, "Could not execute query due to deadlock with other transaction: ${e.message}")
-                LOGGER.info(message)
-                responseObserver.onError(Status.ABORTED.withDescription(message).asException())
-            } catch (e: ExecutionException) {
-                val message = formatMessage(tx, q, "Could not execute query due to an unhandled execution error: ${e.message}")
-                LOGGER.error(message, e)
-                responseObserver.onError(Status.INTERNAL.withDescription(message).asException())
-            } catch (e: Throwable) {
-                val message = formatMessage(tx, q, "Could not execute query due to an unhandled error: ${e.message}")
-                LOGGER.error(message, e)
-                responseObserver.onError(Status.UNKNOWN.withDescription(message).asException())
-            }
-        }
-    } catch (e: TransactionException.TransactionNotFoundException) {
-        val message = "Execution failed because transaction ${request.txId.value} could not be resumed."
-        LOGGER.info(message)
-        responseObserver.onError(Status.FAILED_PRECONDITION.withDescription(message).asException())
+        /* Execute query in transaction context. */
+        executeAndMaterialize(tx, ctx.toOperatorTree(tx), q, 0)
     }
 
     /**
      * gRPC endpoint for explaining queries.
      */
-    override fun explain(request: CottontailGrpc.QueryMessage, responseObserver: StreamObserver<CottontailGrpc.QueryResponseMessage>) = try {
-        this.withTransactionContext(request.txId) { tx, q ->
-            try {
-                /* Start query execution. */
-                val ctx = QueryContext(tx)
-                val totalDuration = measureTime {
-                    /* Bind query and create logical plan. */
-                    val bindTimed = measureTime {
-                        this.binder.bind(request.query, ctx)
-                    }
+    override fun explain(request: CottontailGrpc.QueryMessage): Flow<CottontailGrpc.QueryResponseMessage> = this.withTransactionContext(request.txId, "EXPLAIN QUERY") { tx, q ->
+        val ctx = QueryContext(tx)
 
-                    LOGGER.debug(formatMessage(tx, q, "Parsing & binding query took $bindTimed."))
+        /* Bind query and create logical plan. */
+        this.binder.bind(request.query, ctx)
 
-                    /* Plan query and create execution plan. */
-                    val planTimedValue = measureTimedValue {
-                        val candidates = this.planner.plan(ctx)
-                        SpoolerSinkOperator(ExplainQueryOperator(candidates), q, 0, responseObserver)
-                    }
-                    LOGGER.debug(formatMessage(tx, q, "Planning query took ${planTimedValue.duration}."))
+        /* Plan query and create execution plan candidates. */
+        val candidates = this.planner.plan(ctx)
 
-                    /* Execute query in transaction context. */
-                    tx.execute(planTimedValue.value)
-                }
-
-                LOGGER.info(formatMessage(tx, q, "Explaining query took ${totalDuration}."))
-                responseObserver.onCompleted()
-            } catch (e: QueryException.QuerySyntaxException) {
-                val message = formatMessage(tx, q, "Could not explain query due to syntax error: ${e.message}")
-                LOGGER.info(message)
-                responseObserver.onError(Status.INVALID_ARGUMENT.withDescription(message).asException())
-            } catch (e: QueryException.QueryBindException) {
-                val message = formatMessage(tx, q, "Could not explain query because DBO could not be found: ${e.message}")
-                LOGGER.info(message)
-                responseObserver.onError(Status.INVALID_ARGUMENT.withDescription(message).asException())
-            } catch (e: QueryException.QueryPlannerException) {
-                val message = formatMessage(tx, q, "Could not execute query because of an error during query planning: ${e.message}")
-                LOGGER.info(message)
-                responseObserver.onError(Status.INTERNAL.withDescription(message).asException())
-            } catch (e: TransactionException.DeadlockException) {
-                val message = formatMessage(tx, q, "Could not explain query due to deadlock with other transaction: ${e.message}")
-                LOGGER.info(message)
-                responseObserver.onError(Status.ABORTED.withDescription(message).asException())
-            } catch (e: ExecutionException) {
-                val message = formatMessage(tx, q, "Could not explain query due to an unhandled execution error: ${e.message}")
-                LOGGER.error(message, e)
-                responseObserver.onError(Status.INTERNAL.withDescription(message).asException())
-            } catch (e: Throwable) {
-                val message = formatMessage(tx, q, "Could not explain query due to an unhandled error: ${e.message}")
-                LOGGER.error(message, e)
-                responseObserver.onError(Status.UNKNOWN.withDescription(message).asException())
-            }
-        }
-    } catch (e: TransactionException.TransactionNotFoundException) {
-        val message = "Execution failed because transaction ${request.txId.value} could not be resumed."
-        LOGGER.info(message)
-        responseObserver.onError(Status.FAILED_PRECONDITION.withDescription(message).asException())
+        /* Return execution plans. */
+        executeAndMaterialize(tx, ExplainQueryOperator(candidates), q, 0)
     }
 
     /**
      * gRPC endpoint for handling PING requests.
      */
-    override fun ping(request: Empty, responseObserver: StreamObserver<Empty>) {
-        responseObserver.onNext(Empty.getDefaultInstance())
-        responseObserver.onCompleted()
+    override suspend fun ping(request: Empty): Empty {
+        return Empty.getDefaultInstance()
     }
 }
